@@ -118,6 +118,8 @@ export class Game {
   private compareUid: string | null = null;
   /** Item uid the player explicitly clicked to pick up (sticky until grabbed/gone/zone change). */
   private pickupUid: string | null = null;
+  /** True while a town-portal fade is in flight (blocks double-taps). */
+  private tpBusy = false;
   private pendingClass: StarterClass = 'warrior';
   private pendingRate = 1;
   private xpRate = 1;
@@ -159,6 +161,8 @@ export class Game {
   private elFireCd: HTMLElement | null = null;
   private elBlinkCd: HTMLElement | null = null;
   private elPotion: HTMLElement | null = null;
+  private elTpSlot: HTMLElement | null = null;
+  private elTpCount: HTMLElement | null = null;
   private elToast: HTMLElement | null = null;
   private elDeath: HTMLElement | null = null;
   private elDeathSub: HTMLElement | null = null;
@@ -436,6 +440,8 @@ export class Game {
     this.elCdnFire = $('cdn-fire');
     this.elCdnBlink = $('cdn-blink');
     this.elCdnSkill2 = $('cdn-skill2');
+    this.elTpSlot = $('skill-tp');
+    this.elTpCount = $('tp-count');
     this.elCompare = $('compare-panel');
     this.elXpRate = $('stat-xprate');
     this.minimap = $('minimap') as HTMLCanvasElement | null;
@@ -518,6 +524,7 @@ export class Game {
     document.getElementById('btn-inv')?.addEventListener('click', () => this.toggleInventory());
     document.getElementById('btn-mute')?.addEventListener('click', () => this.toggleMute());
     document.getElementById('btn-chars')?.addEventListener('click', () => this.openCharSelect());
+    document.getElementById('skill-tp')?.addEventListener('click', () => this.useScrollKey());
     document.getElementById('btn-char')?.addEventListener('click', () => this.toggleChar());
     document.getElementById('btn-save')?.addEventListener('click', () => {
       this.autosave();
@@ -968,6 +975,7 @@ export class Game {
       if (e.code === 'KeyC') this.toggleChar();
       if (e.code === 'KeyE') this.tryBlink();
       if (e.code === 'KeyF') this.interact();
+      if (e.code === 'KeyT') this.useScrollKey();
       if (e.code === 'Escape') this.closeAllPanels();
     });
     window.addEventListener('keyup', (e) => {
@@ -1848,23 +1856,36 @@ export class Game {
   private useScroll(uid: string): void {
     const it = this.inventory.find(uid);
     if (!it || it.kind !== 'consumable') return;
-    if (!this.player.alive) return;
+    if (!this.player.alive || this.tpBusy) return;
     if (this.currentZoneId === 'city') {
       this.showToast('Already in Haven — no need for a scroll.');
       return;
     }
+    this.tpBusy = true;
     this.inventory.remove(uid);
     this.hideCompare();
     this.renderInventory();
     this.sound.scroll();
     if (this.elFade) this.elFade.style.opacity = '1';
     window.setTimeout(() => {
+      this.tpBusy = false;
       this.loadZone('city');
       this.snapCamera();
       if (this.elFade) this.elFade.style.opacity = '0';
       this.sound.portal();
       this.showToast('🌀 Town portal! Back in Haven.');
     }, 300);
+  }
+
+  /** T hotkey: burn one TP scroll from the bag, if any. */
+  private useScrollKey(): void {
+    if (!this.started || !this.player.alive || this.tpBusy) return;
+    const scroll = this.inventory.slots.find((s) => s?.kind === 'consumable');
+    if (!scroll) {
+      this.showToast('No Town Portal scrolls — the Trader sells them (20g).');
+      return;
+    }
+    this.useScroll(scroll.uid);
   }
 
   private buyScroll(): void {
@@ -2399,6 +2420,11 @@ export class Game {
       const q = this.player.potionCooldown > 0 ? ` (${this.player.potionCooldown.toFixed(0)}s)` : '';
       this.elPotion.innerHTML = `Q<span class="sub">x${this.player.potions}${q}</span>`;
       this.elPotion.classList.toggle('locked', this.player.potions <= 0);
+    }
+    if (this.elTpCount || this.elTpSlot) {
+      const n = this.inventory.slots.filter((s) => s?.kind === 'consumable').length;
+      if (this.elTpCount) this.elTpCount.textContent = `x${n}`;
+      if (this.elTpSlot) this.elTpSlot.classList.toggle('locked', n <= 0);
     }
     const near = this.nearestInteract();
     if (this.elPrompt) {
