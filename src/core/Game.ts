@@ -945,7 +945,7 @@ export class Game {
         z = THREE.MathUtils.clamp(z + 9, -27, 27);
       }
       const level = randi(def.monsters.levelMin, def.monsters.levelMax);
-      const m = new Monster(new THREE.Vector3(x, 0, z), level, { tint: def.monsterTint });
+      const m = new Monster(new THREE.Vector3(x, 0, z), level, { tint: def.monsterTint, species: def.monsterSpecies });
       m.group.userData.monster = m;
       this.monsters.push(m);
       this.scene.add(m.group);

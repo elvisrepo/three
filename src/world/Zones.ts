@@ -1,5 +1,7 @@
 /** Phase 2 — data-driven zones. Add Zone 3+ here without touching game logic. */
 
+import type { MonsterSpecies } from '../entities/Monster';
+
 export interface MonsterPack {
   count: number;
   levelMin: number;
@@ -21,6 +23,8 @@ export interface ZoneDef {
   wallColor: number;
   /** Trash-monster body tint for zone identity. */
   monsterTint: number;
+  /** Trash-monster visual species. Absent = legacy capsule. */
+  monsterSpecies?: MonsterSpecies;
   monsters: MonsterPack | null;
   boss: BossDef | null;
   hasShop: boolean;
@@ -66,6 +70,7 @@ export const ZONES: ZoneDef[] = [
     fogColor: 0x0b0e14,
     wallColor: 0x24402a,
     monsterTint: 0x9b5de5,
+    monsterSpecies: 'goblin',
     monsters: { count: 8, levelMin: 1, levelMax: 4 },
     boss: { name: 'Dire Wolf Alpha', level: 8 },
     hasShop: false,

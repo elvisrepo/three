@@ -2,8 +2,12 @@ import * as THREE from 'three';
 import type { CircleCollider } from './Player';
 import type { DamageNumbers } from './DamageNumbers';
 import { rollMonsterDamage } from '../combat/Stats';
+import { buildGoblin, poseGoblin, type GoblinRig } from './Goblin';
 
 export type MonsterState = 'idle' | 'chase' | 'return' | 'dead';
+
+/** Visual species (data-driven per zone) — absent = legacy capsule. */
+export type MonsterSpecies = 'goblin';
 
 const _steer = new THREE.Vector3();
 
@@ -54,6 +58,13 @@ export class Monster {
   private hpBg: THREE.Sprite;
   private hpFg: THREE.Sprite;
   private hpFgBaseX = 1.5;
+  /** Procedural rig (goblin species) — null = legacy capsule path. */
+  private goblin: GoblinRig | null = null;
+  /** Materials the hit-flash writes to (goblin mats or [bodyMat]). */
+  private activeMats: THREE.MeshStandardMaterial[] = [];
+  private animT = 0;
+  private walkPhase = 0;
+  private moving = false;
 
   constructor(
     spawn: THREE.Vector3,
@@ -68,6 +79,7 @@ export class Monster {
       isBoss?: boolean;
       aggro?: number;
       respawnDelay?: number;
+      species?: MonsterSpecies;
     },
   ) {
     this.level = level;
@@ -85,19 +97,30 @@ export class Monster {
     this.bodyMat = new THREE.MeshStandardMaterial({ color: opts?.tint ?? 0x9b5de5, roughness: 0.65 });
 
     this.bodyMat = new THREE.MeshStandardMaterial({ color: 0x9b5de5, roughness: 0.65 });
-    this.body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 0.9, 4, 10), this.bodyMat);
-    this.body.position.y = 1.05;
-    this.body.castShadow = true;
-    this.group.add(this.body);
+    if (opts?.species === 'goblin' && !this.isBoss) {
+      this.goblin = buildGoblin();
+      // Slight visual growth with level (gameplay radius unchanged).
+      this.goblin.root.scale.setScalar(sizeScale);
+      this.group.add(this.goblin.root);
+      this.body = this.goblin.torso;
+      this.bodyMat = this.goblin.skinMat;
+      this.activeMats = this.goblin.mats;
+    } else {
+      this.body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 0.9, 4, 10), this.bodyMat);
+      this.body.position.y = 1.05;
+      this.body.castShadow = true;
+      this.group.add(this.body);
 
-    // Angry eyes (face +Z)
-    const eyeGeo = new THREE.SphereGeometry(0.11, 8, 8);
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a0b2e });
-    const eL = new THREE.Mesh(eyeGeo, eyeMat);
-    eL.position.set(-0.2, 1.35, 0.48);
-    const eR = new THREE.Mesh(eyeGeo, eyeMat);
-    eR.position.set(0.2, 1.35, 0.48);
-    this.group.add(eL, eR);
+      // Angry eyes (face +Z)
+      const eyeGeo = new THREE.SphereGeometry(0.11, 8, 8);
+      const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a0b2e });
+      const eL = new THREE.Mesh(eyeGeo, eyeMat);
+      eL.position.set(-0.2, 1.35, 0.48);
+      const eR = new THREE.Mesh(eyeGeo, eyeMat);
+      eR.position.set(0.2, 1.35, 0.48);
+      this.group.add(eL, eR);
+      this.activeMats = [this.bodyMat];
+    }
 
     // Aggro ring under feet (visible when chasing)
     const ring = new THREE.Mesh(
@@ -122,6 +145,11 @@ export class Monster {
     this.hpFg.renderOrder = 21;
     this.hpBg.visible = this.hpFg.visible = false;
     this.group.add(this.hpBg, this.hpFg);
+    if (this.goblin) {
+      // Shorter rig — keep the bar just overhead.
+      this.hpBg.position.y = 2.0;
+      this.hpFg.position.y = 2.0;
+    }
 
     this.home.copy(spawn).setY(0);
     this.group.position.copy(this.home);
@@ -133,15 +161,17 @@ export class Monster {
   }
 
   get hitMeshes(): THREE.Object3D[] {
-    return [this.body];
+    return this.goblin ? this.goblin.pick : [this.body];
   }
 
   takeDamage(amount: number, isCrit: boolean, numbers: DamageNumbers): boolean {
     if (!this.alive) return false;
     this.hp -= amount;
     this.flash = 1;
-    this.bodyMat.emissive.setHex(0xff2222);
-    this.bodyMat.emissiveIntensity = 0.9;
+    for (const m of this.activeMats) {
+      m.emissive.setHex(0xff2222);
+      m.emissiveIntensity = 0.9;
+    }
     numbers.spawn(this.group.position, `${amount}`, {
       color: isCrit ? '#ffd21f' : '#ffffff',
       crit: isCrit,
@@ -201,17 +231,23 @@ export class Monster {
     others: Monster[],
   ): number {
     this.slowTimer = Math.max(0, this.slowTimer - dt);
+    this.animT += dt;
+    this.moving = false;
     // Flash decay (cheap hit feedback)
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 5);
-      this.bodyMat.emissiveIntensity = this.flash * 0.9;
-      if (this.flash === 0) this.bodyMat.emissive.setHex(0x000000);
+      for (const m of this.activeMats) m.emissiveIntensity = this.flash * 0.9;
+      if (this.flash === 0) {
+        for (const m of this.activeMats) m.emissive.setHex(0x000000);
+      }
     }
     if (this.attackAnim > 0) {
       this.attackAnim = Math.max(0, this.attackAnim - dt * 4);
-      const s = 1 + this.attackAnim * 0.18;
-      this.body.scale.set(s, 2 - s > 0 ? 2 - s : 1, s);
-      if (this.attackAnim === 0) this.body.scale.set(1, 1, 1);
+      if (!this.goblin) {
+        const s = 1 + this.attackAnim * 0.18;
+        this.body.scale.set(s, 2 - s > 0 ? 2 - s : 1, s);
+        if (this.attackAnim === 0) this.body.scale.set(1, 1, 1);
+      }
     }
 
     if (!this.alive) {
@@ -281,6 +317,10 @@ export class Monster {
       }
     }
 
+    if (this.goblin) {
+      poseGoblin(this.goblin, this.animT, this.moving, this.walkPhase, this.attackAnim);
+    }
+
     return damageToPlayer;
   }
 
@@ -299,6 +339,8 @@ export class Monster {
     _steer.normalize();
     const effSpeed = this.speed * mult * (this.slowTimer > 0 ? 0.5 : 1);
     this.group.position.addScaledVector(_steer, effSpeed * dt);
+    this.moving = true;
+    this.walkPhase += dt * (5 + effSpeed * 1.6);
 
     // Static obstacles push-out
     for (const c of statics) {
@@ -329,7 +371,9 @@ export class Monster {
     this.group.position.x = THREE.MathUtils.clamp(this.group.position.x, -29, 29);
     this.group.position.z = THREE.MathUtils.clamp(this.group.position.z, -29, 29);
     this.face(target, dt);
-    // Hop while walking
-    this.body.position.y = 1.05 + Math.abs(Math.sin(performance.now() * 0.008)) * 0.1;
+    if (!this.goblin) {
+      // Hop while walking (capsule path; goblin bobs in poseGoblin)
+      this.body.position.y = 1.05 + Math.abs(Math.sin(performance.now() * 0.008)) * 0.1;
+    }
   }
 }
