@@ -2,6 +2,14 @@
 
 export type StarterClass = 'warrior' | 'archer' | 'mage';
 
+/** Core attributes. Effects: STR +1 DMG/2pts · DEX +0.5% crit/pt · INT +3% fireball/pt · VIT +6 HP/pt */
+export interface Attrs {
+  str: number;
+  dex: number;
+  int: number;
+  vit: number;
+}
+
 export interface ClassDef {
   id: StarterClass;
   name: string;
@@ -13,6 +21,7 @@ export interface ClassDef {
   speed: number;
   crit: number;
   fireMult: number;
+  attrs: Attrs;
 }
 
 export const CLASSES: Record<StarterClass, ClassDef> = {
@@ -27,6 +36,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     speed: 6,
     crit: 0.08,
     fireMult: 0.9,
+    attrs: { str: 8, dex: 5, int: 3, vit: 7 },
   },
   archer: {
     id: 'archer',
@@ -39,6 +49,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     speed: 6.8,
     crit: 0.15,
     fireMult: 1.0,
+    attrs: { str: 5, dex: 8, int: 4, vit: 5 },
   },
   mage: {
     id: 'mage',
@@ -51,6 +62,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     speed: 5.8,
     crit: 0.1,
     fireMult: 1.5,
+    attrs: { str: 3, dex: 5, int: 9, vit: 4 },
   },
 };
 

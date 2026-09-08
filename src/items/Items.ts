@@ -22,6 +22,8 @@ export interface ItemInstance {
   affixes: Affix[];
   value: number;
   icon: string;
+  /** Gear equips; consumables (TP scroll) are used from the bag. */
+  kind: 'gear' | 'consumable';
 }
 
 interface ItemBase {
@@ -169,6 +171,7 @@ function buildItem(base: ItemBase, playerLevel: number, rarity: ItemRarity): Ite
     affixes,
     value: Math.max(4, value),
     icon: base.icon,
+    kind: 'gear',
   };
 }
 
@@ -242,4 +245,43 @@ export function gearBonus(items: (ItemInstance | null)[]): GearBonus {
 
 export function sellPrice(item: ItemInstance): number {
   return Math.max(1, Math.floor(item.value * 0.4));
+}
+
+/** Scroll of Town Portal: click in the bag to teleport to Haven. Consumed on use. */
+export function makeTpScroll(): ItemInstance {
+  return {
+    uid: makeUid(),
+    baseId: 'tp_scroll',
+    name: 'Scroll of Town Portal',
+    slot: 'ring',
+    rarity: 'magic',
+    levelReq: 1,
+    dmg: 0,
+    armor: 0,
+    affixes: [],
+    value: 20,
+    icon: '📜',
+    kind: 'consumable',
+  };
+}
+
+export interface ItemStatVector {
+  dmg: number;
+  armor: number;
+  hp: number;
+  crit: number;
+  lifesteal: number;
+}
+
+/** Total stat contribution of one item (base + affixes) — used for compare. */
+export function itemStats(it: ItemInstance): ItemStatVector {
+  const out: ItemStatVector = { dmg: it.dmg, armor: it.armor, hp: 0, crit: 0, lifesteal: 0 };
+  for (const a of it.affixes) {
+    if (a.stat === 'dmg') out.dmg += a.value;
+    else if (a.stat === 'hp') out.hp += a.value;
+    else if (a.stat === 'armor') out.armor += a.value;
+    else if (a.stat === 'crit') out.crit += a.value;
+    else if (a.stat === 'lifesteal') out.lifesteal += a.value;
+  }
+  return out;
 }

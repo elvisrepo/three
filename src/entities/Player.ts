@@ -1,6 +1,14 @@
 import * as THREE from 'three';
 import { xpNeed, playerLevelUpBonus } from '../combat/Stats';
-import { CLASSES, type StarterClass } from '../data/Classes';
+import { CLASSES, type StarterClass, type Attrs } from '../data/Classes';
+
+/** Attribute-derived combat bonus (delta-applied like gear — never double-counts). */
+export interface AttrBonus {
+  damage: number;
+  maxHp: number;
+  crit: number;
+  fire: number;
+}
 
 export interface CircleCollider {
   pos: THREE.Vector3;
@@ -44,6 +52,13 @@ export class Player {
   /** Gear-derived mitigation + sustain (recomputed by Game.refreshGear). */
   armor = 0;
   lifesteal = 0;
+  // --- core attributes (STR/DEX/INT/VIT) ---
+  str = 5;
+  dex = 5;
+  int = 5;
+  vit = 5;
+  statPoints = 0;
+  private prevAttr: AttrBonus = { damage: 0, maxHp: 0, crit: 0, fire: 0 };
   potions = 3;
   potionCooldown = 0;
   alive = true;
@@ -116,7 +131,69 @@ export class Player {
     this.speed = def.speed;
     this.critChance = def.crit;
     this.fireMult = def.fireMult;
+    this.str = def.attrs.str;
+    this.dex = def.attrs.dex;
+    this.int = def.attrs.int;
+    this.vit = def.attrs.vit;
+    this.prevAttr = { damage: 0, maxHp: 0, crit: 0, fire: 0 };
     this.bodyMat.color.setHex(def.color);
+  }
+
+  attrs(): Attrs {
+    return { str: this.str, dex: this.dex, int: this.int, vit: this.vit };
+  }
+
+  setAttrs(a: Attrs): void {
+    this.str = a.str;
+    this.dex = a.dex;
+    this.int = a.int;
+    this.vit = a.vit;
+    this.prevAttr = { damage: 0, maxHp: 0, crit: 0, fire: 0 };
+  }
+
+  /**
+   * Recompute attribute bonuses (STR +1 DMG/2 · DEX +0.5% crit/pt ·
+   * INT +3% fireball/pt · VIT +6 HP/pt). Delta-applied — safe to call anytime.
+   */
+  refreshAttributes(): void {
+    const b: AttrBonus = {
+      damage: Math.floor(this.str / 2),
+      maxHp: this.vit * 6,
+      crit: this.dex * 0.5,
+      fire: this.int * 0.03,
+    };
+    const p = this.prevAttr;
+    this.attackDamage += b.damage - p.damage;
+    const dHp = b.maxHp - p.maxHp;
+    this.maxHp += dHp;
+    if (dHp > 0) this.hp = Math.min(this.maxHp, this.hp + dHp);
+    else this.hp = Math.min(this.hp, this.maxHp);
+    this.critChance += (b.crit - p.crit) / 100;
+    this.fireMult += b.fire - p.fire;
+    this.prevAttr = b;
+  }
+
+  /** Spend one stat point on an attribute. Returns false if none left. */
+  allocate(attr: keyof Attrs): boolean {
+    if (this.statPoints <= 0) return false;
+    this.statPoints -= 1;
+    if (attr === 'str') this.str += 1;
+    else if (attr === 'dex') this.dex += 1;
+    else if (attr === 'int') this.int += 1;
+    else this.vit += 1;
+    this.refreshAttributes();
+    return true;
+  }
+
+  /** Replay level-up stat growth (used when loading a save — no heals). */
+  replayLevels(target: number): void {
+    for (let l = 2; l <= target; l++) {
+      const b = playerLevelUpBonus(l);
+      this.maxHp += b.maxHp;
+      this.attackDamage += b.damage;
+    }
+    this.level = target;
+    this.xpNext = xpNeed(target);
   }
 
   /** Recolor body (used when loading a saved class). */
@@ -156,6 +233,7 @@ export class Player {
       const bonus = playerLevelUpBonus(this.level);
       this.maxHp += bonus.maxHp;
       this.attackDamage += bonus.damage;
+      this.statPoints += 3;
       this.hp = Math.min(this.maxHp, this.hp + Math.round(this.maxHp * 0.4));
       return true;
     }

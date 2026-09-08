@@ -16,12 +16,14 @@ import {
   gearBonus,
   sellPrice,
   affixLabel,
+  makeTpScroll,
+  itemStats,
   RARITY_COLOR,
   type ItemInstance,
   type ItemSlot,
   type GearBonus,
 } from '../items/Items';
-import { type StarterClass } from '../data/Classes';
+import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, type CharacterSave } from './SaveManager';
 import { StateMachine, GameState } from './StateMachine';
 
@@ -86,7 +88,11 @@ export class Game {
   private invOpen = false;
   private shopOpen = false;
   private portalOpen = false;
+  private charOpen = false;
+  private compareUid: string | null = null;
   private pendingClass: StarterClass = 'warrior';
+  private pendingRate = 1;
+  private xpRate = 1;
 
   private kills = 0;
   private playtime = 0;
@@ -130,6 +136,12 @@ export class Game {
   private elCharSelect: HTMLElement | null = null;
   private elCharList: HTMLElement | null = null;
   private elNewName: HTMLInputElement | null = null;
+  private elImportFile: HTMLInputElement | null = null;
+  private elImportStatus: HTMLElement | null = null;
+  private elCharPanel: HTMLElement | null = null;
+  private elCharBody: HTMLElement | null = null;
+  private elCompare: HTMLElement | null = null;
+  private elXpRate: HTMLElement | null = null;
   private elFade: HTMLElement | null = null;
   private hudTimer = 0;
   private fpsEma = 60;
@@ -327,6 +339,12 @@ export class Game {
     this.elCharSelect = $('char-select');
     this.elCharList = $('char-list');
     this.elNewName = $('new-name') as HTMLInputElement | null;
+    this.elImportFile = $('import-file') as HTMLInputElement | null;
+    this.elImportStatus = $('import-status');
+    this.elCharPanel = $('char-panel');
+    this.elCharBody = $('char-body');
+    this.elCompare = $('compare-panel');
+    this.elXpRate = $('stat-xprate');
     this.elFade = $('fade');
 
     // Panel interactions (delegated — survive innerHTML re-renders)
@@ -335,7 +353,12 @@ export class Game {
       if (!t) return;
       const uid = t.dataset.uid;
       if (!uid) return;
-      if (this.shopOpen) this.sellItem(uid);
+      if (this.shopOpen) {
+        this.sellItem(uid);
+        return;
+      }
+      const it = this.inventory.find(uid);
+      if (it?.kind === 'consumable') this.useScroll(uid);
       else this.equipItem(uid);
     });
     this.elEquipRow?.addEventListener('click', (e) => {
@@ -344,9 +367,44 @@ export class Game {
       if (slot) this.unequipItem(slot);
     });
     this.elShopStock?.addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest('[data-buy],[data-buyscroll]') as HTMLElement | null;
+      if (!t) return;
+      if (t.dataset.buyscroll !== undefined) {
+        this.buyScroll();
+        return;
+      }
+      const uid = t.dataset.buy;
+      if (uid) this.buyStock(uid);
+    });
+    this.elShopStock?.addEventListener('mouseover', (e) => {
       const t = (e.target as HTMLElement).closest('[data-buy]') as HTMLElement | null;
       const uid = t?.dataset.buy;
-      if (uid) this.buyStock(uid);
+      if (!uid || uid === this.compareUid) return;
+      this.compareUid = uid;
+      const it = this.shopStock.find((s) => s.uid === uid);
+      if (it) this.showCompare(it);
+    });
+    this.elShopStock?.addEventListener('mouseleave', () => this.hideCompare());
+    this.elInvGrid?.addEventListener('mouseover', (e) => {
+      const t = (e.target as HTMLElement).closest('[data-uid]') as HTMLElement | null;
+      const uid = t?.dataset.uid;
+      if (!uid || uid === this.compareUid) return;
+      this.compareUid = uid;
+      const it = this.inventory.find(uid);
+      if (it) this.showCompare(it);
+    });
+    this.elInvGrid?.addEventListener('mouseleave', () => this.hideCompare());
+    this.elCharBody?.addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest('[data-alloc]') as HTMLElement | null;
+      const attr = t?.dataset.alloc as keyof Attrs | undefined;
+      if (!attr) return;
+      if (this.player.allocate(attr)) {
+        this.autosave();
+        this.renderChar();
+        this.renderInventory();
+      } else {
+        this.showToast('No stat points left — level up to earn +3.');
+      }
     });
     this.elPortalList?.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('[data-travel]') as HTMLElement | null;
@@ -354,11 +412,13 @@ export class Game {
       if (id) this.travelTo(id);
     });
     document.getElementById('btn-inv')?.addEventListener('click', () => this.toggleInventory());
+    document.getElementById('btn-char')?.addEventListener('click', () => this.toggleChar());
     document.getElementById('btn-save')?.addEventListener('click', () => {
       this.autosave();
       this.showToast('Progress saved.');
     });
     document.getElementById('inv-close')?.addEventListener('click', () => this.toggleInventory(false));
+    document.getElementById('char-close')?.addEventListener('click', () => this.toggleChar(false));
     document.getElementById('shop-close')?.addEventListener('click', () => this.closeShop());
     document.getElementById('portal-close')?.addEventListener('click', () => this.closePortal());
   }
@@ -375,18 +435,92 @@ export class Game {
       });
     });
     document.getElementById('btn-create')?.addEventListener('click', () => this.startNewChar());
+    document.querySelectorAll('#rate-row .rate-card').forEach((el) => {
+      el.addEventListener('click', () => {
+        this.pendingRate = Number((el as HTMLElement).dataset.rate) || 1;
+        document.querySelectorAll('#rate-row .rate-card').forEach((x) => x.classList.remove('selected'));
+        el.classList.add('selected');
+      });
+    });
+    document.getElementById('btn-import')?.addEventListener('click', () => this.elImportFile?.click());
+    this.elImportFile?.addEventListener('change', () => this.importHeroFile());
     this.elCharList?.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('[data-act]') as HTMLElement | null;
       if (!t) return;
       const id = t.dataset.id;
       if (!id) return;
       if (t.dataset.act === 'load') this.loadSave(id);
+      else if (t.dataset.act === 'exp') this.exportHero(id);
       else if (t.dataset.act === 'del') {
         deleteChar(id);
         this.renderCharList();
       }
     });
     this.renderCharList();
+  }
+
+  private exportHero(id: string): void {
+    const s = listChars().find((c) => c.id === id);
+    if (!s || !this.elImportStatus) return;
+    try {
+      const blob = new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${s.name.replace(/[^a-z0-9-_]+/gi, '_') || 'hero'}.hero.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      this.elImportStatus.textContent = `Exported ${s.name}.`;
+    } catch {
+      this.elImportStatus.textContent = 'Export failed in this browser.';
+    }
+  }
+
+  private importHeroFile(): void {
+    const file = this.elImportFile?.files?.[0];
+    if (!file) return;
+    const done = (msg: string) => {
+      if (this.elImportStatus) this.elImportStatus.textContent = msg;
+      if (this.elImportFile) this.elImportFile.value = '';
+    };
+    file.text().then((text) => {
+      try {
+        const obj = JSON.parse(text) as Partial<CharacterSave>;
+        if (!obj || typeof obj.name !== 'string') throw new Error('bad file');
+        const bc: StarterClass = CLASS_IDS.includes(obj.baseClass as StarterClass)
+          ? (obj.baseClass as StarterClass)
+          : 'warrior';
+        const level = Math.max(1, Math.min(60, Math.floor(Number(obj.level) || 1)));
+        const save: CharacterSave = {
+          id: makeCharId(),
+          name: String(obj.name).slice(0, 16) || 'Hero',
+          baseClass: bc,
+          level,
+          xp: Math.max(0, Number(obj.xp) || 0),
+          gold: Math.max(0, Math.floor(Number(obj.gold) || 0)),
+          hp: Math.max(1, Number(obj.hp) || 50),
+          maxHp: Math.max(20, Number(obj.maxHp) || 100),
+          damage: Math.max(1, Number(obj.damage) || 10),
+          crit: Number(obj.crit) || 0.1,
+          potions: Math.max(0, Math.min(5, Math.floor(Number(obj.potions) || 0))),
+          kills: Math.max(0, Math.floor(Number(obj.kills) || 0)),
+          playtimeSec: Math.max(0, Number(obj.playtimeSec) || 0),
+          xpRate: [1, 2, 3].includes(Number(obj.xpRate)) ? Number(obj.xpRate) : 1,
+          attrs: obj.attrs ?? { ...CLASSES[bc].attrs },
+          statPoints: Math.max(0, Math.floor(Number(obj.statPoints) || 0)),
+          inventory: Array.isArray(obj.inventory) ? obj.inventory.slice(0, 24) : [],
+          equipment: obj.equipment ?? { weapon: null, helm: null, chest: null, boots: null, ring: null },
+          zoneId: typeof obj.zoneId === 'string' ? obj.zoneId : 'city',
+          pos: Array.isArray(obj.pos) ? [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 6] : [0, 6],
+          version: SAVE_VERSION,
+          updatedAt: Date.now(),
+        };
+        saveChar(save);
+        this.renderCharList();
+        done(`Imported ${save.name} (Lv${save.level}).`);
+      } catch {
+        done('Import failed: not a valid hero file.');
+      }
+    }).catch(() => done('Import failed: could not read file.'));
   }
 
   private renderCharList(): void {
@@ -400,9 +534,10 @@ export class Game {
       const zone = zoneById(c.zoneId).name;
       const when = new Date(c.updatedAt).toLocaleDateString();
       return `<div class="char-row">
-        <div><b>${c.name}</b> <span class="dim">${c.baseClass} · Lv${c.level} · ${zone}</span></div>
+        <div><b>${c.name}</b> <span class="dim">${c.baseClass} · Lv${c.level} · ${zone} · x${c.xpRate ?? 1} EXP</span></div>
         <div class="dim">played ${Math.round(c.playtimeSec / 60)}m · ${when}</div>
         <div class="row-btns"><button data-act="load" data-id="${c.id}">Load</button>
+        <button data-act="exp" data-id="${c.id}">Export</button>
         <button data-act="del" data-id="${c.id}" class="danger">Delete</button></div>
       </div>`;
     }).join('');
@@ -418,13 +553,18 @@ export class Game {
     this.player.potions = 3;
     this.player.armor = 0;
     this.player.lifesteal = 0;
+    this.player.statPoints = 0;
+    this.player.refreshAttributes();
     this.kills = 0;
     this.playtime = 0;
+    this.xpRate = this.pendingRate;
     this.inventory = new Inventory();
     this.equipment = new Equipment();
     this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
     for (const it of starterKit()) this.equipment.equip(it);
     this.refreshGear();
+    this.inventory.add(makeTpScroll());
+    this.inventory.add(makeTpScroll());
     this.player.hp = this.player.maxHp;
     this.currentSaveId = makeCharId();
     this.started = true;
@@ -445,38 +585,25 @@ export class Game {
   }
 
   private applySave(s: CharacterSave): void {
+    // Recompute everything deterministically: class base + attributes + levels + gear.
     this.player.applyClass(s.baseClass);
     this.player.charName = s.name;
-    // Recompute level-based growth deterministically, then layer gear on top.
-    this.player.level = 1;
+    this.player.setAttrs(s.attrs ?? { ...CLASSES[s.baseClass].attrs });
+    this.player.refreshAttributes();
+    this.player.replayLevels(s.level);
     this.player.xp = s.xp;
-    this.player.xpNext = xpNeed(s.level);
-    this.player.level = s.level;
-    // NOTE: gainXp path adds +maxHp/+dmg per level; reconstruct the same totals:
-    // base (from class) is set by applyClass; replay level bonuses:
-    this.player.applyClass(s.baseClass);
-    this.player.level = 1;
-    // replay quickly without heals
-    for (let l = 2; l <= s.level; l++) {
-      this.player.level = l;
-      this.player.xpNext = xpNeed(l);
-    }
-    // Restore exact totals saved (robust against tuning changes):
-    this.player.maxHp = s.maxHp;
-    this.player.attackDamage = s.damage;
-    this.player.critChance = s.crit;
-    this.player.hp = Math.min(s.hp, s.maxHp);
-    this.player.potions = s.potions;
+    this.player.statPoints = s.statPoints ?? 0;
     this.player.armor = 0;
     this.player.lifesteal = 0;
     this.kills = s.kills;
     this.playtime = s.playtimeSec;
+    this.xpRate = s.xpRate ?? 1;
     this.inventory.fromJSON(s.inventory, s.gold);
     this.equipment.fromJSON(s.equipment);
-    // Re-derive gear bonus baseline without double-applying (totals already include gear):
-    this.prevGear = gearBonus(this.equipment.all());
-    this.player.armor = this.prevGear.armor;
-    this.player.lifesteal = this.prevGear.lifesteal;
+    this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
+    this.refreshGear();
+    this.player.hp = Math.min(s.hp, this.player.maxHp);
+    this.player.potions = s.potions;
   }
 
   private collectSave(): CharacterSave | null {
@@ -495,6 +622,9 @@ export class Game {
       potions: this.player.potions,
       kills: this.kills,
       playtimeSec: Math.round(this.playtime),
+      xpRate: this.xpRate,
+      attrs: this.player.attrs(),
+      statPoints: this.player.statPoints,
       inventory: this.inventory.toJSON(),
       equipment: this.equipment.toJSON(),
       zoneId: this.currentZoneId,
@@ -669,6 +799,7 @@ export class Game {
       if (e.code === 'Digit1') this.tryFireball();
       if (e.code === 'KeyQ') this.tryPotion();
       if (e.code === 'KeyI') this.toggleInventory();
+      if (e.code === 'KeyC') this.toggleChar();
       if (e.code === 'KeyE') this.interact();
       if (e.code === 'Escape') this.closeAllPanels();
     });
@@ -899,22 +1030,27 @@ export class Game {
     this.numbers.spawn(m.position, `+${gold}g`, { color: '#ffd479', scale: 1.1 });
 
     if (m.isBoss) {
+      // Guaranteed drop, minimum magic quality.
       const r = Math.random();
-      const force = r < 0.05 ? 'legendary' : r < 0.35 ? 'rare' : r < 0.7 ? 'magic' : 'normal';
+      const force = r < 0.06 ? 'legendary' : r < 0.4 ? 'rare' : 'magic';
       this.loot.spawnItem(m.position, generateDrop(this.player.level, 6, force));
       if (Math.random() < 0.5) this.loot.spawnItem(m.position, generateDrop(this.player.level));
-      this.showToast(`👑 ${m.displayName || 'Boss'} slain! Grab the loot crystals!`, 3.2);
-    } else if (Math.random() < 0.09) {
-      this.loot.spawnItem(m.position, generateDrop(this.player.level));
+      this.loot.spawnItem(m.position, makeTpScroll());
+      this.loot.spawnItem(m.position, makeTpScroll());
+      this.showToast(`👑 ${m.displayName || 'Boss'} slain! Guaranteed loot — grab the crystals!`, 3.2);
+    } else {
+      if (Math.random() < 0.09) this.loot.spawnItem(m.position, generateDrop(this.player.level));
+      if (Math.random() < 0.05) this.loot.spawnItem(m.position, makeTpScroll());
     }
 
-    const leveled = this.player.gainXp(m.xpValue);
+    const leveled = this.player.gainXp(m.xpValue * this.xpRate);
     if (leveled) {
       this.numbers.spawn(this.player.position, 'LEVEL UP!', { color: '#ffd21f', crit: true, scale: 1.8 });
-      this.showToast(`Level ${this.player.level}! Trader restocked. (+1 potion)`, 3);
+      this.showToast(`Level ${this.player.level}! +3 stat points (C) · Trader restocked · +1 potion`, 3.2);
       this.player.potions = Math.min(5, this.player.potions + 1);
       this.refreshShopStock();
       this.renderShop();
+      this.renderChar();
     }
     this.updateBossBar();
     this.renderInventory();
@@ -935,7 +1071,9 @@ export class Game {
   // ---------- shop / inventory / portal ----------
 
   private itemTooltip(it: ItemInstance): string {
-    const lines = [
+    if (it.kind === 'consumable') {
+      return `${it.icon} ${it.name}\nClick: teleport to Haven (consumed on use)\nSell: ${sellPrice(it)}g`;
+    }    const lines = [
       `${it.icon} ${it.name} (Lv${it.levelReq})`,
       it.dmg > 0 ? `Damage: ${it.dmg}` : '',
       it.armor > 0 ? `Armor: ${it.armor}` : '',
@@ -976,9 +1114,121 @@ export class Game {
     this.invOpen = false;
     this.shopOpen = false;
     this.portalOpen = false;
+    this.charOpen = false;
+    this.hideCompare();
     this.renderInventory();
     this.renderShop();
     this.renderPortal();
+    this.renderChar();
+  }
+
+  // ---------- character panel ----------
+
+  private toggleChar(force?: boolean): void {
+    this.charOpen = force ?? !this.charOpen;
+    this.renderChar();
+  }
+
+  private renderChar(): void {
+    if (this.elCharPanel) this.elCharPanel.style.display = this.charOpen ? 'block' : 'none';
+    if (!this.charOpen || !this.elCharBody) return;
+    const p = this.player;
+    const cls = CLASSES[p.baseClass];
+    const attrRow = (key: keyof Attrs, label: string, effect: string): string => {
+      const v = p.attrs()[key];
+      return `<div class="attr-row"><span><b>${label}</b> ${v}</span>` +
+        `<span class="dim">${effect}</span>` +
+        `<button data-alloc="${key}" ${p.statPoints > 0 ? '' : 'disabled'}>+</button></div>`;
+    };
+    this.elCharBody.innerHTML =
+      `<div class="char-head">${cls.icon} <b>${p.charName}</b> <span class="dim">${cls.name} · Lv${p.level}</span></div>` +
+      `<div class="dim">XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate</div>` +
+      `<div class="stat-points">⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level</div>` +
+      attrRow('str', 'STR', '+1 DMG / 2') +
+      attrRow('dex', 'DEX', '+0.5% crit each') +
+      attrRow('int', 'INT', '+3% fireball each') +
+      attrRow('vit', 'VIT', '+6 HP each') +
+      `<div class="derived">DMG ${p.attackDamage} · Armor ${p.armor}<br>` +
+      `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
+      `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}</div>`;
+  }
+
+  // ---------- item compare ----------
+
+  private showCompare(item: ItemInstance): void {
+    if (!this.elCompare) return;
+    if (item.kind === 'consumable') {
+      this.elCompare.innerHTML =
+        `<b>${item.icon} ${item.name}</b>` +
+        `<div class="dim">Click in bag: teleport to Haven.<br>Consumed on use · sells for ${sellPrice(item)}g.</div>`;
+      this.elCompare.style.display = 'block';
+      return;
+    }
+    const eq = this.equipment.slots[item.slot];
+    const a = itemStats(item);
+    const b = eq ? itemStats(eq) : { dmg: 0, armor: 0, hp: 0, crit: 0, lifesteal: 0 };
+    const row = (label: string, av: number, bv: number, suffix = ''): string => {
+      const d = av - bv;
+      const cls = d > 0 ? 'better' : d < 0 ? 'worse' : '';
+      const diff = d !== 0 ? ` <span class="${cls}">(${d > 0 ? '+' : ''}${d}${suffix})</span>` : '';
+      return `<div class="cmp-row"><span>${label}</span><b class="${cls}">${av}${suffix}</b><span class="dim">eq ${bv}${suffix}</span>${diff}</div>`;
+    };
+    const reqWarn = this.player.level < item.levelReq
+      ? `<div class="worse">Requires Lv${item.levelReq}</div>` : '';
+    this.elCompare.innerHTML =
+      `<b style="color:${RARITY_COLOR[item.rarity]}">${item.icon} ${item.name}</b>` +
+      `<div class="dim">vs ${eq ? `${eq.icon} ${eq.name}` : '— nothing equipped —'}</div>` +
+      reqWarn +
+      row('Damage', a.dmg, b.dmg) +
+      row('Armor', a.armor, b.armor) +
+      row('Max HP', a.hp, b.hp) +
+      row('Crit %', a.crit, b.crit) +
+      row('Lifesteal %', a.lifesteal, b.lifesteal);
+    this.elCompare.style.display = 'block';
+  }
+
+  private hideCompare(): void {
+    this.compareUid = null;
+    if (this.elCompare) this.elCompare.style.display = 'none';
+  }
+
+  // ---------- town portal scrolls ----------
+
+  /** Consume one scroll from the bag and teleport to Haven. */
+  private useScroll(uid: string): void {
+    const it = this.inventory.find(uid);
+    if (!it || it.kind !== 'consumable') return;
+    if (!this.player.alive) return;
+    if (this.currentZoneId === 'city') {
+      this.showToast('Already in Haven — no need for a scroll.');
+      return;
+    }
+    this.inventory.remove(uid);
+    this.hideCompare();
+    this.renderInventory();
+    if (this.elFade) this.elFade.style.opacity = '1';
+    window.setTimeout(() => {
+      this.loadZone('city');
+      this.snapCamera();
+      if (this.elFade) this.elFade.style.opacity = '0';
+      this.showToast('🌀 Town portal! Back in Haven.');
+    }, 300);
+  }
+
+  private buyScroll(): void {
+    const price = 20;
+    if (this.inventory.gold < price) {
+      this.showToast('Not enough gold (20g).');
+      return;
+    }
+    const scroll = makeTpScroll();
+    if (!this.inventory.add(scroll)) {
+      this.showToast('Inventory full!');
+      return;
+    }
+    this.inventory.gold -= price;
+    this.renderShop();
+    this.renderInventory();
   }
 
   private renderInventory(): void {
@@ -1004,8 +1254,10 @@ export class Game {
       this.elInvGrid.innerHTML = this.inventory.slots.map((it) => {
         if (!it) return '<div class="inv-cell empty"></div>';
         const usable = this.player.level >= it.levelReq;
-        const sellTag = this.shopOpen ? `<i>+${sellPrice(it)}g</i>` : '';
-        return `<div class="inv-cell r-${it.rarity}${usable ? '' : ' unusable'}" data-uid="${it.uid}" title="${this.itemTooltip(it)}">${it.icon}${sellTag}</div>`;
+        const tag = this.shopOpen
+          ? `<i>+${sellPrice(it)}g</i>`
+          : it.kind === 'consumable' ? '<i>use</i>' : '';
+        return `<div class="inv-cell r-${it.rarity}${usable ? '' : ' unusable'}" data-uid="${it.uid}" title="${this.itemTooltip(it)}">${it.icon}${tag}</div>`;
       }).join('');
     }
   }
@@ -1015,7 +1267,13 @@ export class Game {
     if (!this.shopOpen) return;
     if (this.elShopGold) this.elShopGold.textContent = `${this.inventory.gold}g`;
     if (this.elShopStock) {
-      this.elShopStock.innerHTML = this.shopStock.map((it) => {
+      const scrollRow = `<div class="shop-row">
+          <div class="shop-icon r-magic">📜</div>
+          <div class="shop-info"><b style="color:${RARITY_COLOR.magic}">Scroll of Town Portal</b>
+          <div class="dim">Teleport to Haven · consumed on use</div></div>
+          <button data-buyscroll="1">20g</button>
+        </div>`;
+      this.elShopStock.innerHTML = scrollRow + this.shopStock.map((it) => {
         const stats = [
           it.dmg > 0 ? `${it.dmg} dmg` : '',
           it.armor > 0 ? `${it.armor} arm` : '',
@@ -1358,6 +1616,7 @@ export class Game {
     }
     if (this.elLevel) this.elLevel.textContent = `${this.player.level}`;
     if (this.elKills) this.elKills.textContent = `${this.kills}`;
+    if (this.elXpRate) this.elXpRate.textContent = `x${this.xpRate}`;
     if (this.elGold) this.elGold.textContent = `${this.inventory.gold}g`;
     if (this.elZone) this.elZone.textContent = zoneById(this.currentZoneId).name;
     if (this.elPotion) {
@@ -1377,6 +1636,7 @@ export class Game {
         this.elPrompt.style.opacity = '0';
       }
     }
+    if (this.charOpen) this.renderChar();
     this.updateBossBar();
   }
 

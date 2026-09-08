@@ -380,3 +380,30 @@ Log `timeToLevel, deathsPerZone, bossKillTime` to console/localStorage for tunin
 ---
 
 *Generated for `3jsgame` — next artifact should be `src/data/zones.json` + `classes.json` + playable movement prototype.*
+
+---
+
+## 15. Future Direction: Accounts, Multiplayer, Security, Monetization (NOT in scope yet)
+
+Explicitly recorded so the current architecture doesn't block it later. Single-player + localStorage is correct for now — but observe these constraints:
+
+**Accounts / login (future)**
+- Characters move from `localStorage` to a backend DB keyed by account id. `SaveManager` + versioned `CharacterSave` already isolate persistence behind one interface — keep it that way so a backend slots in as a second implementation.
+- Prefer hosted auth (OAuth / magic link) over hand-rolled passwords. Never store credentials or tokens in game code.
+
+**Multiplayer (future)**
+- Target an **authoritative-server** model: the server simulates damage, loot, XP and economy; the client renders + sends intents. Never trust client-reported kills, gold, or items.
+- Practical options when the time comes: Colyseus / Nakama, or custom Node + WebSocket. Likely shape: shared town-hub instances + per-party combat-zone instances.
+- Prep today (cheap): keep simulation decoupled from rendering (`Game.ts` owns the loop; monsters/skills don't touch the DOM), use fixed data-driven defs for zones/items/skills, and give every item/character a UID (already done). Avoid baking "only one player exists" deep into systems — e.g. damage numbers and loot pickup already take a position, not an assumed player.
+
+**Security (future, load-bearing once money/accounts exist)**
+- Server validates everything of value: gold deltas, item grants, shop prices, portal level gates, XP awards.
+- Transport: HTTPS/WSS only. No secrets, API keys, or payment keys in the client bundle (Vite `VITE_*` vars ship to browsers).
+- Input validation + rate limiting on all game endpoints; short-lived session tokens; GDPR basics from day one of accounts (data export — client export already exists — plus deletion on request).
+
+**Monetization (future)**
+- Assumption to validate later: cosmetics / stash tabs / battle-pass style — avoid pay-to-win stat sales in an ARPG economy, it kills trading and trust.
+- Use a real payments provider (Stripe / Xsolla / Steam payments). Entitlements must be granted **server-side via provider webhooks**, never by client callback. Test in sandbox mode; plan for regional pricing, tax/VAT, and refund handling before launch.
+- Anti-fraud follows from server-authoritative design: duped items and edited saves stop mattering once the server is the source of truth.
+
+**What NOT to do now:** build custom auth, custom crypto, or any payment code. Just don't paint ourselves into a corner (see constraints above).

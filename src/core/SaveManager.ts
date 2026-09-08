@@ -1,7 +1,7 @@
 /** Versioned localStorage persistence for characters. */
 
 import type { ItemInstance } from '../items/Items';
-import type { StarterClass } from '../data/Classes';
+import type { StarterClass, Attrs } from '../data/Classes';
 import type { EquipSlots } from '../items/Inventory';
 
 export interface CharacterSave {
@@ -18,6 +18,9 @@ export interface CharacterSave {
   potions: number;
   kills: number;
   playtimeSec: number;
+  xpRate: number;
+  attrs: Attrs;
+  statPoints: number;
   inventory: (ItemInstance | null)[];
   equipment: EquipSlots;
   zoneId: string;

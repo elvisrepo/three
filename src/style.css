@@ -464,6 +464,91 @@ html, body, #app {
   font-size: 15px;
 }
 
+#rate-row {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0 14px;
+}
+
+.rate-card {
+  flex: 1;
+  padding: 10px 6px;
+  background: #141a28;
+  border: 2px solid #333;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rate-card span { font-size: 11px; opacity: 0.7; }
+.rate-card.selected { border-color: #7dffd4; background: #14261f; }
+
+#save-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+/* ---- character + compare panels ---- */
+
+#char-panel { left: 12px; top: 190px; width: 300px; }
+
+#compare-panel {
+  position: absolute;
+  top: 110px;
+  right: 324px;
+  width: 250px;
+  background: rgba(8, 12, 20, 0.95);
+  border: 1px solid rgba(125, 255, 212, 0.4);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 12.5px;
+  pointer-events: none;
+}
+
+.char-head { font-size: 15px; margin-bottom: 2px; }
+
+.stat-points {
+  color: #ffd479;
+  font-weight: 800;
+  margin: 6px 0 4px;
+}
+
+.attr-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.attr-row span:first-child { flex: 1; }
+.attr-row .dim { flex: 1.4; font-size: 11px; }
+
+.derived {
+  margin-top: 8px;
+  padding: 6px 8px;
+  background: #141a28;
+  border-radius: 6px;
+  line-height: 1.6;
+}
+
+.cmp-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+
+.cmp-row span:first-child { flex: 1; opacity: 0.75; }
+
+.better { color: #5dff6b; }
+.worse { color: #ff6b6b; }
+
 /* ---- death + fade ---- */
 
 #death-overlay {
