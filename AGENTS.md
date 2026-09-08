@@ -7,7 +7,7 @@ Three.js isometric ARPG (Diablo/PoE-like), single-player prototype. Read this be
 Playable Phase 2 loop: title → hero select/create (Warrior/Archer/Mage, x1–x10 EXP rate) → Haven
 (shop + portal) → Greenmeadow 1–10 + boss → Crypt 10–20 + boss → Ember Wastes 20–30 + boss →
 attrs, loot rarities, TP scrolls, minimap, blink, localStorage saves with export/import. **Lv10 job advancement is in** (`src/data/Jobs.ts`,
-6 jobs each with a key-2 skill). Design doc: `ARPG_PLAN.md`. Deferred work + playtest notes live in
+6 jobs each with a key-2 skill). **Lv20 ultimates are in** (auto-unlock per job on key-3). Design doc: `ARPG_PLAN.md`. Deferred work + playtest notes live in
 `ARPG_PLAN.md` §16 (backlog) — check it before proposing next steps. Future (accounts, multiplayer,
 security, monetization) is **documented, not built** — see `ARPG_PLAN.md` §15 and "Product constraints" below.
 
@@ -30,7 +30,7 @@ security, monetization) is **documented, not built** — see `ARPG_PLAN.md` §15
 - `src/items/` — `Items.ts` (bases, rarities, affixes, drop/shop generation, TP scroll, compare helper),
   `Inventory.ts` (24-slot bag + 5 gear slots + gold).
 - `src/world/` — `Terrain.ts` (one 60×60 ground, recolored per zone), `Zones.ts` (**data-driven zone defs**),
-  `Loot.ts` (rarity beams, walk-over pickup).
+  `Loot.ts` (rarity beams, click-to-pick with spawn delay).
 - `src/data/Classes.ts` — starter classes + `Attrs` (STR +1 DMG/2 · DEX +0.5% crit · INT +3% fire · VIT +6 HP).
 - `src/audio/Sound.ts` — procedural Web Audio SFX + generative music (no deps/assets). Unlocks on first input.
 - `docs/diagrams/` — Mermaid system-design docs (MVP + future online architecture). New diagrams go here.

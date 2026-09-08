@@ -40,6 +40,9 @@ export class Player {
   baseClass: StarterClass = 'warrior';
   /** Advanced job id (null until Lv10 advancement). */
   job: string | null = null;
+  /** Temporary damage buff (Rampage): multiplier + remaining seconds. */
+  buffDmgMult = 1;
+  buffTimer = 0;
   fireMult = 1;
   level = 1;
   xp = 0;
@@ -260,6 +263,8 @@ export class Player {
     this.attackTarget = null;
     this.attackTimer = 0;
     this.potionCooldown = 0;
+    this.buffDmgMult = 1;
+    this.buffTimer = 0;
     this.potions = Math.max(this.potions, 2);
     this.bodyMat.emissive.setHex(0x000000);
     this.bodyMat.emissiveIntensity = 0;
@@ -268,6 +273,10 @@ export class Player {
   update(dt: number, colliders: CircleCollider[], keyboardDir: THREE.Vector3): void {
     this.attackTimer = Math.max(0, this.attackTimer - dt);
     this.potionCooldown = Math.max(0, this.potionCooldown - dt);
+    if (this.buffTimer > 0) {
+      this.buffTimer -= dt;
+      if (this.buffTimer <= 0) this.buffDmgMult = 1;
+    }
 
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 4);

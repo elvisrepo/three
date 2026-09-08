@@ -416,7 +416,7 @@ Things offered or noticed but deliberately not built yet. Check here before prop
 
 ### Deferred features (all scoped, none started)
 - **Minimap click-to-move** — map px → world coords → `setTarget`. ~10 lines. Minimap is display-only today.
-- **Second advancement (Lv20)** — ultimate per job on key `3`. Pattern exists (`Jobs.ts` + key-`2` slot); needs 6 ult designs.
+- **Second advancement (Lv20)** — done (6 ults on key `3`, auto-unlock; see `Jobs.ts` + `castUlt`).
 - **Zone 4 (Lv 30–40)** — append one object to `ZONES` (Zone 3 Ember Wastes 20–30 + Cinder Tyrant done).
 - **QoL pack** — pause menu, volume slider (mute exists), keybind remapping (keys hardcoded in `bindInput`), stash chest in Haven.
 - **Quests** — kill-count + boss-kill tracker with rewards. No quest state exists yet.

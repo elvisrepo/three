@@ -14,8 +14,8 @@
       <div id="hud">
         <div id="hud-help" class="panel">
           <strong>ARPG — Phase 2 Loop</strong>
-          <div><b>Click</b> monster: attack · ground: move · loot: walk over</div>
-          <div><b>1</b> fireball · <b>2</b> job skill (Lv10+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
+          <div><b>Click</b> monster: attack · ground: move · crystal: pick up</div>
+          <div><b>1</b> fireball · <b>2</b> job skill (Lv10+) · <b>3</b> ultimate (Lv20+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
           <div><b>E</b> blink · <b>F</b> talk/portal · 📜 scroll in bag = teleport home</div>
           <div><b>WASD</b> move · <b>wheel</b> zoom (out to 40) · hover gear to compare</div>
           <div>👑 on minimap = live boss · <b>M</b> mute</div>
@@ -44,6 +44,7 @@
             <div class="skill" title="Left-click monster = auto attack">⚔️</div>
             <div class="skill" title="Fireball (1) — 2x damage">1<span class="cd-num" id="cdn-fire"></span><div id="cd-fire" class="cd"></div></div>
             <div class="skill locked" id="skill-job" title="Reach Lv10 and choose a job to unlock">2<span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div></div>
+            <div class="skill locked" id="skill-ult" title="Lv20 ultimate — unlocks automatically for your job">3<span class="cd-num" id="cdn-skill3"></span><div id="cd-skill3" class="cd"></div></div>
             <div class="skill" title="Blink (E) — teleport toward cursor">E<span class="cd-num" id="cdn-blink"></span><div id="cd-blink" class="cd"></div></div>
             <div class="skill" id="skill-potion" title="Potion (Q) — heal 45%">Q</div>
             <button class="skill btn" id="btn-char" title="Character (C)">👤</button>
@@ -63,7 +64,7 @@
           <div class="dim" id="gear-stats"></div>
           <div id="equip-row"></div>
           <div id="inv-grid"></div>
-          <div class="dim pad">Click gear: equip · 📜 scroll: use (teleport) · hover: compare · @ trader: click sells</div>
+          <div class="dim pad">Click gear: equip · 📜 scroll: use (teleport) · hover: compare · right-click: drop · @ trader: click sells</div>
         </div>
 
         <div id="shop-panel" class="side-panel" style="display:none">

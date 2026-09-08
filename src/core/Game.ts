@@ -9,7 +9,7 @@ import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
 import { ZONES, zoneById, type ZoneDef } from '../world/Zones';
-import { LootManager } from '../world/Loot';
+import { LootManager, PICKUP_DELAY } from '../world/Loot';
 import { Inventory, Equipment } from '../items/Inventory';
 import {
   generateDrop,
@@ -26,7 +26,7 @@ import {
   type GearBonus,
 } from '../items/Items';
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
-import { jobsFor, jobById, ADVANCE_LEVEL } from '../data/Jobs';
+import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL } from '../data/Jobs';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, type CharacterSave } from './SaveManager';
 import { StateMachine, GameState } from './StateMachine';
 
@@ -60,6 +60,7 @@ interface PendingAoe {
   color: number;
   flash: string | null;
   scorch: boolean;
+  sfx: string | null;
   mesh: THREE.Mesh;
 }
 
@@ -115,6 +116,8 @@ export class Game {
   private portalOpen = false;
   private charOpen = false;
   private compareUid: string | null = null;
+  /** Item uid the player explicitly clicked to pick up (sticky until grabbed/gone/zone change). */
+  private pickupUid: string | null = null;
   private pendingClass: StarterClass = 'warrior';
   private pendingRate = 1;
   private xpRate = 1;
@@ -126,6 +129,10 @@ export class Game {
   private blinkTimer = 0;
   private skillTimer = 0;
   private skillCdMax = 1;
+  private skill3Timer = 0;
+  private skill3CdMax = 1;
+  private ultHintShown = false;
+  private buffFxAcc = 0;
   private whirlTimer = 0;
   private sanctumHintShown = false;
   private deathTimer = 0;
@@ -182,6 +189,9 @@ export class Game {
   private elJobCards: HTMLElement | null = null;
   private elSkill2: HTMLElement | null = null;
   private elSkill2Cd: HTMLElement | null = null;
+  private elSkill3: HTMLElement | null = null;
+  private elSkill3Cd: HTMLElement | null = null;
+  private elCdnSkill3: HTMLElement | null = null;
   private elCdnFire: HTMLElement | null = null;
   private elCdnBlink: HTMLElement | null = null;
   private elCdnSkill2: HTMLElement | null = null;
@@ -258,7 +268,7 @@ export class Game {
 
     this.numbers = new DamageNumbers(this.scene);
     this.effects = new Effects(this.scene);
-    this.projectiles = new ProjectilePool(this.scene, 16);
+    this.projectiles = new ProjectilePool(this.scene, 24);
     this.loot = new LootManager(this.scene);
   }
 
@@ -420,6 +430,9 @@ export class Game {
     this.elJobCards = $('job-cards');
     this.elSkill2 = $('skill-job');
     this.elSkill2Cd = $('cd-skill2');
+    this.elSkill3 = $('skill-ult');
+    this.elSkill3Cd = $('cd-skill3');
+    this.elCdnSkill3 = $('cdn-skill3');
     this.elCdnFire = $('cdn-fire');
     this.elCdnBlink = $('cdn-blink');
     this.elCdnSkill2 = $('cdn-skill2');
@@ -444,6 +457,13 @@ export class Game {
       const it = this.inventory.find(uid);
       if (it?.kind === 'consumable') this.useScroll(uid);
       else this.equipItem(uid);
+    });
+    // Right-click a bag item: drop it on the ground (browser menu suppressed).
+    this.elInvGrid?.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const t = (e.target as HTMLElement).closest('[data-uid]') as HTMLElement | null;
+      const uid = t?.dataset.uid;
+      if (uid) this.dropItem(uid);
     });
     this.elEquipRow?.addEventListener('click', (e) => {
       const t = (e.target as HTMLElement).closest('[data-slot]') as HTMLElement | null;
@@ -673,6 +693,7 @@ export class Game {
     this.player.hp = this.player.maxHp;
     this.currentSaveId = makeCharId();
     this.sanctumHintShown = false;
+    this.ultHintShown = false;
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone('city');
@@ -685,6 +706,7 @@ export class Game {
     this.applySave(s);
     this.currentSaveId = s.id;
     this.sanctumHintShown = false;
+    this.ultHintShown = false;
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone(s.zoneId, { pos: [s.pos[0], s.pos[1]] });
@@ -781,6 +803,7 @@ export class Game {
     this.monsters = [];
     this.bossCtrls = [];
     this.loot.clear();
+    this.pickupUid = null;
     this.player.clearAttackTarget();
     this.player.stop();
 
@@ -817,8 +840,10 @@ export class Game {
       this.showToast(`Entered ${def.name} — ${def.sub}`);
       this.autosave();
       this.hintSanctum();
+      this.hintUlt();
     }
     this.refreshSkillSlot();
+    this.refreshSkillSlot3();
   }
 
   private spawnZoneMonsters(def: ZoneDef): void {
@@ -937,6 +962,7 @@ export class Game {
       if (!this.started) return;
       if (e.code === 'Digit1') this.tryFireball();
       if (e.code === 'Digit2') this.castJobSkill();
+      if (e.code === 'Digit3') this.castUlt();
       if (e.code === 'KeyQ') this.tryPotion();
       if (e.code === 'KeyI') this.toggleInventory();
       if (e.code === 'KeyC') this.toggleChar();
@@ -1040,12 +1066,20 @@ export class Game {
       }
     }
 
-    // 3) Ground loot — walk to it (vacuum pickup on arrival)
+    // 3) Ground loot — click a crystal to walk over and grab it (no vacuum)
     if (this.loot.count > 0) {
       const lootHits = this.raycaster.intersectObjects(this.loot.drops.map((d) => d.group), true);
       if (lootHits.length > 0) {
         let o: THREE.Object3D | null = lootHits[0].object;
         while (o && o.parent !== this.scene) o = o.parent;
+        const drop = o ? this.loot.drops.find((d) => d.group === o) : undefined;
+        if (o && drop) {
+          this.player.clearAttackTarget();
+          this.player.setTarget(o.position);
+          this.pickupUid = drop.item.uid;
+          this.showMarker(o.position, 0xffd21f);
+          return;
+        }
         if (o) {
           this.player.clearAttackTarget();
           this.player.setTarget(o.position);
@@ -1132,7 +1166,7 @@ export class Game {
     this.projectiles.fire(
       this.player.position,
       this.tmpVec,
-      this.player.attackDamage * FIREBALL_MULT * this.player.fireMult,
+      this.effDmg(this.player.attackDamage) * FIREBALL_MULT * this.player.fireMult,
       16,
       18,
     );
@@ -1228,6 +1262,14 @@ export class Game {
     this.showToast('⭐ Job advancement awaits in the golden Sanctum circle in Haven!', 3.5);
   }
 
+  /** One-time ultimate unlock toast (the slot itself refreshes every zone load). */
+  private hintUlt(): void {
+    if (!this.started || !this.ultUnlocked() || this.ultHintShown) return;
+    this.ultHintShown = true;
+    const job = jobById(this.player.job);
+    this.showToast(`🌟 ULTIMATE unlocked: ${job?.ultimate.icon} ${job?.ultimate.name} — press 3!`, 3.5);
+  }
+
   private openJobModal(): void {
     if (!this.elJobModal || !this.elJobCards) return;
     const jobs = jobsFor(this.player.baseClass);
@@ -1267,6 +1309,7 @@ export class Game {
     this.player.critChance += def.bonus.crit;
     this.closeJobModal();
     this.refreshSkillSlot();
+    this.refreshSkillSlot3();
     this.renderChar();
     this.sound.jobAdvance();
     this.numbers.spawn(this.player.position, `${def.name.toUpperCase()}!`, { color: '#ffd21f', crit: true, scale: 1.8 });
@@ -1291,6 +1334,32 @@ export class Game {
     this.elCdnSkill2 = document.getElementById('cdn-skill2');
   }
 
+  /** Ultimate slot is job-bound and unlocks at Lv20 — no save data needed. */
+  private ultUnlocked(): boolean {
+    return this.player.job !== null && this.player.level >= ULT_LEVEL;
+  }
+
+  private refreshSkillSlot3(): void {
+    if (!this.elSkill3) return;
+    const job = jobById(this.player.job);
+    if (job && this.player.level >= ULT_LEVEL) {
+      this.elSkill3.classList.remove('locked');
+      this.elSkill3.innerHTML = `${job.ultimate.icon}<span class="key">3</span><span class="cd-num" id="cdn-skill3"></span><div id="cd-skill3" class="cd"></div>`;
+      this.elSkill3.title = `${job.ultimate.name} (3) — ${job.ultimate.desc}`;
+    } else {
+      this.elSkill3.classList.add('locked');
+      this.elSkill3.innerHTML = `3<span class="cd-num" id="cdn-skill3"></span><div id="cd-skill3" class="cd"></div>`;
+      this.elSkill3.title = job ? `Ultimate unlocks at Lv${ULT_LEVEL}` : 'Advance to a job first';
+    }
+    this.elSkill3Cd = document.getElementById('cd-skill3');
+    this.elCdnSkill3 = document.getElementById('cdn-skill3');
+  }
+
+  /** Base damage after temporary buffs (Rampage). Apply at every damage source. */
+  private effDmg(base: number): number {
+    return base * this.player.buffDmgMult;
+  }
+
   private castJobSkill(): void {
     if (!this.started || !this.player.alive || this.skillTimer > 0) return;
     const job = jobById(this.player.job);
@@ -1299,7 +1368,7 @@ export class Game {
       else this.showToast('Reach Lv10 and choose a job to unlock this slot.');
       return;
     }
-    const dmg = this.player.attackDamage;
+    const dmg = this.effDmg(this.player.attackDamage);
     switch (job.skill.id) {
       case 'shield_throw': {
         const dir = this.aimDir();
@@ -1367,6 +1436,91 @@ export class Game {
     this.skillCdMax = job.skill.cooldown;
   }
 
+  /** Ultimate: job signature nuke on key 3. Auto-unlocked at Lv20 for your job. */
+  private castUlt(): void {
+    if (!this.started || !this.player.alive || this.skill3Timer > 0) return;
+    const job = jobById(this.player.job);
+    if (!job || this.player.level < ULT_LEVEL) {
+      this.showToast(job ? `Ultimate unlocks at Lv${ULT_LEVEL}.` : 'Advance to a job first (Haven Sanctum).');
+      return;
+    }
+    const ult = job.ultimate;
+    const dmg = this.effDmg(this.player.attackDamage);
+    let cd = ult.cooldown;
+    switch (ult.id) {
+      case 'judgment': {
+        this.player.swingAnim = 1;
+        this.sound.bossSlam();
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 6, 0.6);
+        this.flashScreen('#ffd21f', 0.35, 0.35);
+        this.camShake = Math.min(0.9, this.camShake + 0.4);
+        this.hitAllInRadius(this.player.position, 6, dmg * 5, 0, 0xffd21f);
+        break;
+      }
+      case 'rampage': {
+        this.player.buffDmgMult = 2;
+        this.player.buffTimer = 8;
+        this.player.swingAnim = 1;
+        this.sound.roar();
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xff3b3b, 3.5);
+        this.numbers.spawn(this.player.position, 'RAMPAGE!', { color: '#ff3b3b', crit: true, scale: 1.6 });
+        break;
+      }
+      case 'arrow_storm': {
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * Math.PI * 2;
+          this.projectiles.fire(this.player.position, _aoeVec.set(Math.sin(a), 0, Math.cos(a)), dmg * 1.5, 15, 14, 0x5dff6b);
+        }
+        this.player.swingAnim = 1;
+        this.sound.fireball();
+        this.effects.ring(this.player.position.x, this.player.position.z, 0x5dff6b, 3);
+        break;
+      }
+      case 'execute': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        const dest = dir.clone().multiplyScalar(12).add(this.player.position);
+        this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0x444444, count: 14, speed: 4, life: 0.4, size: 1 });
+        this.resolveTeleport(dest);
+        this.player.position.copy(dest);
+        this.player.setTarget(dest);
+        this.player.faceInstant(dir.clone().add(dest));
+        this.player.swingAnim = 1;
+        this.sound.blink();
+        this.showMarker(dest, 0x444444);
+        this.effects.ring(dest.x, dest.z, 0xff3b3b, 3);
+        const k0 = this.kills;
+        this.hitAllInRadius(dest, 3, dmg * 6, 0, 0xff3b3b);
+        if (this.kills > k0) {
+          cd *= 0.5;
+          this.showToast('💀 EXECUTED! Half cooldown refunded.');
+        }
+        break;
+      }
+      case 'cataclysm': {
+        const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+        if (!aim) return;
+        const spots: Array<[number, number, number]> = [[aim.x, aim.z, 0.4], [aim.x + 2.5, aim.z + 1, 0.8], [aim.x - 2.5, aim.z - 1, 1.2]];
+        for (const [sx, sz, delay] of spots) {
+          this.queueAoe(sx, sz, 3.5, dmg * 3 * this.player.fireMult, 0, delay, 0xff6a00, { flash: '#ff8a2e', scorch: true, sfx: 'slam' });
+        }
+        this.player.swingAnim = 1;
+        this.sound.fireball();
+        break;
+      }
+      case 'glacial_prison': {
+        this.queueAoe(this.player.position.x, this.player.position.z, 7, dmg * 2.5, 5, 0.5, 0x9adcff);
+        this.player.swingAnim = 1;
+        this.sound.blink();
+        break;
+      }
+      default:
+        return;
+    }
+    this.skill3Timer = cd;
+    this.skill3CdMax = cd;
+  }
+
   /** Melee-style AoE with lifesteal + shared kill handling. Slow in seconds (0 = none). */
   private hitAllInRadius(center: THREE.Vector3, radius: number, damage: number, slow: number, color = 0xffffff): void {
     let hitAny = false;
@@ -1393,7 +1547,7 @@ export class Game {
     }
   }
 
-  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean }): void {
+  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string }): void {
     const mesh = new THREE.Mesh(
       new THREE.RingGeometry(Math.max(0.1, radius - 0.4), radius, 40),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
@@ -1401,7 +1555,7 @@ export class Game {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.05, z);
     this.scene.add(mesh);
-    this.pendingAoe.push({ x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, mesh });
+    this.pendingAoe.push({ x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh });
   }
 
   private updatePendingAoe(dt: number): void {
@@ -1420,6 +1574,7 @@ export class Game {
       this.effects.burst(a.x, 1.0, a.z, { color: a.color, count: 22, speed: 7, life: 0.6, size: 1.2 });
       if (a.scorch) this.effects.scorch(a.x, a.z, a.radius);
       if (a.flash) this.flashScreen(a.flash);
+      if (a.sfx === 'slam') this.sound.bossSlam();
       this.camShake = Math.min(0.9, this.camShake + 0.45);
       this.hitAllInRadius(_aoeVec.set(a.x, 0, a.z), a.radius, a.damage, a.slow, a.color);
     }
@@ -1503,18 +1658,18 @@ export class Game {
       this.renderShop();
       this.renderChar();
       this.hintSanctum();
+      if (this.ultUnlocked()) {
+        this.refreshSkillSlot3();
+        this.hintUlt();
+      }
     }
     this.updateBossBar();
     this.renderInventory();
     this.autosave();
   }
 
+  /** Loot grabbed by clicking its crystal — bag space is checked before removal. */
   private onLootPickup(item: ItemInstance): void {
-    if (!this.inventory.add(item)) {
-      this.loot.spawnItem(this.player.position, item);
-      this.showToast('Inventory full! Press I to manage gear.');
-      return;
-    }
     this.numbers.spawn(this.player.position, item.name, { color: RARITY_COLOR[item.rarity], scale: 1.15 });
     this.sound.lootRarity(item.rarity);
     this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: parseInt(RARITY_COLOR[item.rarity].slice(1), 16), count: 8, speed: 3, life: 0.4, size: 0.8 });
@@ -1590,7 +1745,12 @@ export class Game {
 
   private jobLine(): string {
     const j = jobById(this.player.job);
-    if (j) return `<div class="dim">${j.icon} ${j.name} · ${j.skill.icon} ${j.skill.name} (2)</div>`;
+    if (j) {
+      const ult = this.player.level >= ULT_LEVEL
+        ? ` · ${j.ultimate.icon} ${j.ultimate.name} (3)`
+        : ` · ??? (3 at Lv${ULT_LEVEL})`;
+      return `<div class="dim">${j.icon} ${j.name} · ${j.skill.icon} ${j.skill.name} (2)${ult}</div>`;
+    }
     if (this.player.level >= ADVANCE_LEVEL) {
       return `<div class="dim">⭐ Step into the golden Sanctum in Haven</div>`;
     }
@@ -1617,7 +1777,7 @@ export class Game {
       attrRow('dex', 'DEX', '+0.5% crit each') +
       attrRow('int', 'INT', '+3% fireball each') +
       attrRow('vit', 'VIT', '+6 HP each') +
-      `<div class="derived" id="char-derived">DMG ${p.attackDamage} · Armor ${p.armor}<br>` +
+      `<div class="derived" id="char-derived">DMG ${p.attackDamage}${p.buffTimer > 0 ? ' 😡x2' : ''} · Armor ${p.armor}<br>` +
       `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
       `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}</div>`;
   }
@@ -1637,7 +1797,7 @@ export class Game {
     const der = this.elCharBody.querySelector('#char-derived');
     if (der) {
       der.innerHTML =
-        `DMG ${p.attackDamage} · Armor ${p.armor}<br>` +
+        `DMG ${p.attackDamage}${p.buffTimer > 0 ? ' 😡x2' : ''} · Armor ${p.armor}<br>` +
         `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
         `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}`;
     }
@@ -1820,6 +1980,17 @@ export class Game {
     this.renderInventory();
   }
 
+  /** Drop a bag item on the ground beneath you — walk over it to pick it back up. */
+  private dropItem(uid: string): void {
+    const it = this.inventory.remove(uid);
+    if (!it) return;
+    this.loot.spawnItem(this.player.position, it);
+    this.hideCompare();
+    this.sound.equip();
+    this.showToast(`Dropped ${it.icon} ${it.name} — click it to pick it back up`);
+    this.renderInventory();
+  }
+
   private sellItem(uid: string): void {
     const it = this.inventory.remove(uid);
     if (!it) return;
@@ -1962,6 +2133,7 @@ export class Game {
     this.fireTimer = Math.max(0, this.fireTimer - dt);
     this.blinkTimer = Math.max(0, this.blinkTimer - dt);
     this.skillTimer = Math.max(0, this.skillTimer - dt);
+    this.skill3Timer = Math.max(0, this.skill3Timer - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
 
     this.autosaveTimer -= dt;
@@ -1991,6 +2163,36 @@ export class Game {
     }
 
     this.player.update(dt, this.colliders, kb);
+
+    // Marked-loot grab: clicked crystal within reach and past its spawn delay
+    if (this.pickupUid) {
+      const drop = this.loot.findDrop(this.pickupUid);
+      if (!drop) {
+        this.pickupUid = null;
+      } else {
+        const dx = this.player.position.x - drop.group.position.x;
+        const dz = this.player.position.z - drop.group.position.z;
+        if (dx * dx + dz * dz < 1.7 * 1.7 && drop.age >= PICKUP_DELAY) {
+          this.pickupUid = null;
+          this.player.stop();
+          if (this.inventory.add(drop.item)) {
+            this.loot.removeDrop(drop.item.uid);
+            this.onLootPickup(drop.item);
+          } else {
+            this.showToast('Inventory full! Press I to manage gear.');
+          }
+        }
+      }
+    }
+
+    // Rampage aura: pulsing red ring while the damage buff holds
+    if (this.player.buffTimer > 0) {
+      this.buffFxAcc -= dt;
+      if (this.buffFxAcc <= 0) {
+        this.buffFxAcc = 0.4;
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xff3b3b, 2.5, 0.4);
+      }
+    }
 
     // Whirlwind spin visual + trailing sparks
     if (this.whirlTimer > 0) {
@@ -2048,7 +2250,7 @@ export class Game {
         this.player.attackTimer = this.player.attackCooldown;
         this.player.faceInstant(target.position);
         this.player.swingAnim = 1;
-        const roll = rollPlayerDamage(this.player.attackDamage, this.player.critChance);
+        const roll = rollPlayerDamage(this.effDmg(this.player.attackDamage), this.player.critChance);
         const died = target.takeDamage(roll.amount, roll.isCrit, this.numbers);
         this.healLifesteal(roll.amount);
         this.sound.hit(roll.isCrit);
@@ -2078,7 +2280,7 @@ export class Game {
         this.effects.burst(m.position.x, 1.4, m.position.z, { color, count: 10, speed: 4, life: 0.4, size: 0.9 });
       },
     );
-    this.loot.update(dt, this.player.position, (item) => this.onLootPickup(item));
+    this.loot.update(dt);
     this.numbers.update(dt);
     this.effects.update(dt);
     this.sound.update(dt);
@@ -2152,6 +2354,11 @@ export class Game {
       const frac = this.skillTimer / this.skillCdMax;
       this.elSkill2Cd.style.height = `${Math.round(frac * 100)}%`;
     }
+    if (this.elSkill3Cd) {
+      const frac = this.skill3Timer / this.skill3CdMax;
+      this.elSkill3Cd.style.height = `${Math.round(frac * 100)}%`;
+    }
+    if (this.elCdnSkill3) this.elCdnSkill3.textContent = this.skill3Timer > 0.05 ? `${Math.ceil(this.skill3Timer)}` : '';
     if (this.elCdnFire) this.elCdnFire.textContent = this.fireTimer > 0.05 ? `${Math.ceil(this.fireTimer)}` : '';
     if (this.elCdnBlink) this.elCdnBlink.textContent = this.blinkTimer > 0.05 ? `${Math.ceil(this.blinkTimer)}` : '';
     if (this.elCdnSkill2) this.elCdnSkill2.textContent = this.skillTimer > 0.05 ? `${Math.ceil(this.skillTimer)}` : '';

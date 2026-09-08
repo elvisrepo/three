@@ -5,7 +5,12 @@ interface Drop {
   group: THREE.Group;
   item: ItemInstance;
   phase: number;
+  /** Seconds since spawn — fresh drops can't be grabbed (see PICKUP_DELAY). */
+  age: number;
 }
+
+/** Grace period before a fresh drop becomes grabbable (no instant re-pickup). */
+export const PICKUP_DELAY = 1.0;
 
 function disposeGroup(g: THREE.Object3D): void {
   g.traverse((o) => {
@@ -19,7 +24,7 @@ function disposeGroup(g: THREE.Object3D): void {
   });
 }
 
-/** Ground loot: rarity-colored crystal + light beam. Walk within ~2m to pick up. */
+/** Ground loot: rarity-colored crystal + light beam. Click a crystal to walk over and grab it. */
 export class LootManager {
   drops: Drop[] = [];
 
@@ -57,24 +62,29 @@ export class LootManager {
       THREE.MathUtils.clamp(pos.z + (Math.random() - 0.5) * 2.4, -28, 28),
     );
     this.scene.add(group);
-    this.drops.push({ group, item, phase: Math.random() * 6 });
+    this.drops.push({ group, item, phase: Math.random() * 6, age: 0 });
   }
 
-  update(dt: number, playerPos: THREE.Vector3, onPickup: (item: ItemInstance, at: THREE.Vector3) => void): void {
-    for (let i = this.drops.length - 1; i >= 0; i--) {
-      const d = this.drops[i];
+  /** Animate only — grabbing is explicit via findDrop/removeDrop (click-to-pickup). */
+  update(dt: number): void {
+    for (const d of this.drops) {
+      d.age += dt;
       d.phase += dt * 2.2;
       d.group.rotation.y += dt * 1.6;
       d.group.children[0].position.y = 0.75 + Math.sin(d.phase) * 0.15;
-      const dx = playerPos.x - d.group.position.x;
-      const dz = playerPos.z - d.group.position.z;
-      if (dx * dx + dz * dz < 2.1 * 2.1) {
-        onPickup(d.item, d.group.position);
-        this.scene.remove(d.group);
-        disposeGroup(d.group);
-        this.drops.splice(i, 1);
-      }
     }
+  }
+
+  findDrop(uid: string): { group: THREE.Group; item: ItemInstance; age: number } | null {
+    return this.drops.find((d) => d.item.uid === uid) ?? null;
+  }
+
+  removeDrop(uid: string): void {
+    const i = this.drops.findIndex((d) => d.item.uid === uid);
+    if (i === -1) return;
+    const [d] = this.drops.splice(i, 1);
+    this.scene.remove(d.group);
+    disposeGroup(d.group);
   }
 
   clear(): void {
