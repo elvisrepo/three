@@ -22,6 +22,8 @@ export interface ClassDef {
   crit: number;
   fireMult: number;
   attrs: Attrs;
+  /** Optional Mixamo model dir under public/ (e.g. 'models/player/warrior'). Absent = capsule fallback. */
+  model?: string;
 }
 
 export const CLASSES: Record<StarterClass, ClassDef> = {
@@ -37,6 +39,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     crit: 0.08,
     fireMult: 0.9,
     attrs: { str: 8, dex: 5, int: 3, vit: 7 },
+    model: 'models/player/warrior',
   },
   archer: {
     id: 'archer',

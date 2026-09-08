@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { xpNeed, playerLevelUpBonus } from '../combat/Stats';
 import { CLASSES, type StarterClass, type Attrs } from '../data/Classes';
 
@@ -78,6 +79,22 @@ export class Player {
   private stopDistance = 0.2;
   private flash = 0;
 
+  // --- Mixamo skinned model (warrior first; capsule fallback until loaded) ---
+  private modelRoot: THREE.Group | null = null;
+  private mixer: THREE.AnimationMixer | null = null;
+  private animIdle: THREE.AnimationAction | null = null;
+  private animRun: THREE.AnimationAction | null = null;
+  private animAttack: THREE.AnimationAction | null = null;
+  private animHit: THREE.AnimationAction | null = null;
+  private animDeath: THREE.AnimationAction | null = null;
+  private modelMats: THREE.MeshStandardMaterial[] = [];
+  private modelKey: string | null = null;
+  private modelLoading = false;
+  private lastSwing = 0;
+  private lastHitAnimAt = -10;
+  private elapsed = 0;
+  private deathPlayed = false;
+
   constructor() {
     const bodyGeo = new THREE.CapsuleGeometry(0.5, 1.0, 4, 12);
     this.bodyMat = new THREE.MeshStandardMaterial({ color: 0x4da3ff, roughness: 0.6 });
@@ -143,6 +160,7 @@ export class Player {
     this.vit = def.attrs.vit;
     this.prevAttr = { damage: 0, maxHp: 0, crit: 0, fire: 0 };
     this.bodyMat.color.setHex(def.color);
+    this.ensureModel(cls);
   }
 
   attrs(): Attrs {
@@ -207,6 +225,143 @@ export class Player {
     this.bodyMat.color.setHex(hex);
   }
 
+  /** Swap to the class Mixamo model if defined; otherwise keep the capsule. */
+  private ensureModel(cls: StarterClass): void {
+    const base = CLASSES[cls].model ?? null;
+    if (base === this.modelKey || this.modelLoading) return;
+    if (!base) {
+      this.hideModel();
+      return;
+    }
+    this.modelLoading = true;
+    void this.loadModel(cls, base).finally(() => {
+      this.modelLoading = false;
+    });
+  }
+
+  private hideModel(): void {
+    this.modelKey = null;
+    this.mixer = null;
+    this.animIdle = this.animRun = this.animAttack = this.animHit = this.animDeath = null;
+    this.modelMats = [];
+    if (this.modelRoot) {
+      this.group.remove(this.modelRoot);
+      this.modelRoot = null;
+    }
+    this.body.visible = true;
+    this.nose.visible = true;
+  }
+
+  /** Load idle.fbx (mesh + idle clip), then animation-only clips onto the same rig. */
+  private async loadModel(cls: StarterClass, base: string): Promise<void> {
+    // Stale request (class changed mid-load) — abort quietly.
+    if (this.baseClass !== cls) return;
+    const url = (f: string): string => `${import.meta.env.BASE_URL}${base}/${f}`;
+    const loader = new FBXLoader();
+    let baseObj: THREE.Group;
+    try {
+      baseObj = await loader.loadAsync(url('idle.fbx'));
+    } catch (err) {
+      console.warn(`[Player] warrior model missing (${url('idle.fbx')}), keeping capsule`, err);
+      return;
+    }
+    if (this.baseClass !== cls) return;
+
+    // Mixamo exports in centimeters — scale to meters to match capsule (~1.8m).
+    baseObj.scale.setScalar(0.01);
+    baseObj.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh || (o as THREE.SkinnedMesh).isSkinnedMesh) {
+        const mesh = o as THREE.Mesh;
+        mesh.castShadow = true;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          if (m instanceof THREE.MeshStandardMaterial && !this.modelMats.includes(m)) {
+            this.modelMats.push(m);
+          }
+        }
+      }
+    });
+    if (this.modelRoot) this.group.remove(this.modelRoot);
+    this.modelRoot = baseObj;
+    this.group.add(baseObj);
+    this.body.visible = false;
+    this.nose.visible = false;
+    this.modelKey = base;
+    this.deathPlayed = false;
+
+    this.mixer = new THREE.AnimationMixer(baseObj);
+    const idleClip = baseObj.animations[0] ?? null;
+    if (idleClip) {
+      this.animIdle = this.mixer.clipAction(idleClip);
+      this.animIdle.setLoop(THREE.LoopRepeat, Infinity);
+      this.animIdle.play();
+    }
+
+    // Animation-only files share the same mixamorig bone names — clips apply directly.
+    const extra: Array<{ file: string; set: (a: THREE.AnimationAction) => void; loop: boolean; speed: number }> = [
+      { file: 'run.fbx', set: (a) => (this.animRun = a), loop: true, speed: 1 },
+      { file: 'attack.fbx', set: (a) => (this.animAttack = a), loop: false, speed: 2.2 },
+      { file: 'hit.fbx', set: (a) => (this.animHit = a), loop: false, speed: 1.6 },
+      { file: 'death.fbx', set: (a) => (this.animDeath = a), loop: false, speed: 1 },
+    ];
+    await Promise.all(
+      extra.map(async (e) => {
+        try {
+          const obj = await loader.loadAsync(url(e.file));
+          const clip = obj.animations[0];
+          if (!clip || !this.mixer) return;
+          const action = this.mixer.clipAction(clip);
+          if (e.loop) {
+            action.setLoop(THREE.LoopRepeat, Infinity);
+          } else {
+            action.setLoop(THREE.LoopOnce, 1);
+            action.clampWhenFinished = true;
+          }
+          action.timeScale = e.speed;
+          e.set(action);
+        } catch (err) {
+          console.warn(`[Player] missing anim ${e.file}, locomotion fallback`, err);
+        }
+      }),
+    );
+  }
+
+  private fadeTo(action: THREE.AnimationAction | null, dur = 0.15): void {
+    if (!action || !this.mixer) return;
+    // Fade out everything else so one-shots never stack (hit interrupts
+    // slash, death interrupts all). `enabled` (not `isRunning`) on purpose:
+    // a finished one-shot is paused-but-enabled, clamped at its end pose,
+    // and fading is mixer-time driven so it still releases.
+    for (const a of [this.animIdle, this.animRun, this.animAttack, this.animHit, this.animDeath]) {
+      if (a && a !== action && a.enabled) a.fadeOut(dur);
+    }
+    action.reset();
+    action.setEffectiveWeight(1);
+    action.fadeIn(dur);
+    action.play();
+  }
+
+  private oneShotPlaying(): boolean {
+    return !!(
+      (this.animAttack && this.animAttack.isRunning()) ||
+      (this.animHit && this.animHit.isRunning())
+    );
+  }
+
+  private playLoop(name: 'idle' | 'run'): void {
+    const action = name === 'run' ? this.animRun : this.animIdle;
+    if (!action || !this.mixer) return;
+    // Let a slash / hit-reaction finish first; this is re-asserted every
+    // frame from update(), so locomotion resumes on its own.
+    if (this.oneShotPlaying()) return;
+    // Check the action itself, not a remembered name: a finished one-shot
+    // leaves the loop faded out and three disables it, so isRunning() is
+    // false and we fade back in. (Matching on name alone caused the
+    // post-cast "floating" — stuck in the slash end pose while gliding.)
+    if (action.isRunning()) return;
+    this.fadeTo(action);
+  }
+
   faceInstant(p: THREE.Vector3): void {
     this.group.rotation.y = Math.atan2(p.x - this.group.position.x, p.z - this.group.position.z);
   }
@@ -217,6 +372,14 @@ export class Player {
     this.flash = 1;
     this.bodyMat.emissive.setHex(0xff2222);
     this.bodyMat.emissiveIntensity = 0.7;
+    for (const m of this.modelMats) {
+      m.emissive.setHex(0xff2222);
+      m.emissiveIntensity = 0.7;
+    }
+    if (this.mixer && this.animHit && this.elapsed - this.lastHitAnimAt > 0.35) {
+      this.lastHitAnimAt = this.elapsed;
+      this.fadeTo(this.animHit, 0.08);
+    }
     if (this.hp <= 0) {
       this.hp = 0;
       this.alive = false;
@@ -268,31 +431,62 @@ export class Player {
     this.potions = Math.max(this.potions, 2);
     this.bodyMat.emissive.setHex(0x000000);
     this.bodyMat.emissiveIntensity = 0;
+    for (const m of this.modelMats) {
+      m.emissive.setHex(0x000000);
+      m.emissiveIntensity = 0;
+    }
+    this.deathPlayed = false;
+    this.lastSwing = 0;
+    if (this.mixer && this.animIdle) {
+      this.animDeath?.stop();
+      this.fadeTo(this.animIdle, 0.2);
+    }
   }
 
   update(dt: number, colliders: CircleCollider[], keyboardDir: THREE.Vector3): void {
+    this.elapsed += dt;
     this.attackTimer = Math.max(0, this.attackTimer - dt);
     this.potionCooldown = Math.max(0, this.potionCooldown - dt);
     if (this.buffTimer > 0) {
       this.buffTimer -= dt;
       if (this.buffTimer <= 0) this.buffDmgMult = 1;
     }
+    if (this.mixer) this.mixer.update(dt);
 
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 4);
       this.bodyMat.emissiveIntensity = this.flash * 0.7;
-      if (this.flash === 0) this.bodyMat.emissive.setHex(0x000000);
+      for (const m of this.modelMats) m.emissiveIntensity = this.flash * 0.7;
+      if (this.flash === 0) {
+        this.bodyMat.emissive.setHex(0x000000);
+        for (const m of this.modelMats) m.emissive.setHex(0x000000);
+      }
     }
+    const swingBefore = this.lastSwing;
     if (this.swingAnim > 0) {
       this.swingAnim = Math.max(0, this.swingAnim - dt * 6);
-      const s = 1 + this.swingAnim * 0.12;
-      this.body.scale.set(s, 2 - s > 0.6 ? 2 - s : 1, s);
-      if (this.swingAnim === 0) this.body.scale.set(1, 1, 1);
+      if (!this.modelRoot) {
+        const s = 1 + this.swingAnim * 0.12;
+        this.body.scale.set(s, 2 - s > 0.6 ? 2 - s : 1, s);
+        if (this.swingAnim === 0) this.body.scale.set(1, 1, 1);
+      }
     }
+    // Rising edge on swingAnim (Game sets it to 1 per attack) -> slash once.
+    if (this.swingAnim > 0.5 && swingBefore <= 0.5 && this.alive && this.mixer && this.animAttack) {
+      this.fadeTo(this.animAttack, 0.08);
+    }
+    this.lastSwing = this.swingAnim;
 
     if (!this.alive) {
-      // Death pose: fall over
-      this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, -Math.PI / 2.4, 1 - Math.exp(-6 * dt));
+      if (this.mixer && this.animDeath) {
+        if (!this.deathPlayed) {
+          this.deathPlayed = true;
+          this.fadeTo(this.animDeath, 0.15);
+        }
+      } else {
+        // Capsule fallback death pose: fall over
+        this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, -Math.PI / 2.4, 1 - Math.exp(-6 * dt));
+      }
       this.isMoving = false;
       return;
     }
@@ -310,15 +504,18 @@ export class Player {
       if (dist < this.stopDistance) {
         this.target = null;
         this.isMoving = false;
+        if (this.mixer) this.playLoop('idle');
         return;
       }
       move.normalize();
     } else {
       this.isMoving = false;
+      if (this.mixer) this.playLoop('idle');
       return;
     }
 
     this.isMoving = true;
+    if (this.mixer) this.playLoop('run');
     this.group.position.addScaledVector(move, this.speed * dt);
 
     for (const c of colliders) {
@@ -342,7 +539,9 @@ export class Player {
     this.group.rotation.y = lerpAngle(this.group.rotation.y, targetYaw, 1 - Math.exp(-12 * dt));
 
     this.walkTime += dt * 10;
-    this.body.position.y = 1.1 + Math.abs(Math.sin(this.walkTime)) * 0.08;
-    this.nose.position.y = this.body.position.y;
+    if (!this.modelRoot) {
+      this.body.position.y = 1.1 + Math.abs(Math.sin(this.walkTime)) * 0.08;
+      this.nose.position.y = this.body.position.y;
+    }
   }
 }
