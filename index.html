@@ -13,20 +13,26 @@
       <!-- HUD overlay (HTML, not canvas) -->
       <div id="hud">
         <div id="hud-help" class="panel">
-          <strong>ARPG Prototype — Phase 1 Combat</strong>
-          <div><b>Left-click</b> monster: attack-move</div>
-          <div><b>Left-click</b> ground: move · <b>Right-click</b>: stop</div>
-          <div><b>1</b>: Fireball · <b>Q</b>: potion · <b>WASD</b>: move</div>
-          <div><b>Wheel</b>: zoom</div>
+          <strong>ARPG — Phase 2 Loop</strong>
+          <div><b>Click</b> monster: attack · ground: move · loot: walk over</div>
+          <div><b>1</b> fireball · <b>Q</b> potion · <b>I</b> bag · <b>E</b> talk/portal</div>
+          <div><b>WASD</b> move · <b>wheel</b> zoom · <b>right-click</b> stop</div>
         </div>
         <div id="hud-stats" class="panel">
-          <div>Lv <b id="stat-level">1</b> · kills: <span id="stat-kills">0</span></div>
-          <div>pos: <span id="stat-pos">0, 0</span></div>
-          <div>state: <span id="stat-state">idle</span></div>
-          <div>fps: <span id="stat-fps">--</span></div>
+          <div>📍 <b id="stat-zone">Haven</b> · Lv <b id="stat-level">1</b></div>
+          <div>💰 <span id="stat-gold">150g</span> · ⚔️ <span id="stat-kills">0</span></div>
+          <div>pos: <span id="stat-pos">0, 0</span> · <span id="stat-state">idle</span> · <span id="stat-fps">--</span> fps</div>
+          <div class="dim" id="stat-save">not saved yet</div>
+          <div class="row-btns"><button id="btn-save">💾 Save</button></div>
         </div>
 
         <div id="hud-toast"></div>
+        <div id="interact-prompt"></div>
+
+        <div id="boss-bar" style="display:none">
+          <div id="boss-name">👑 Boss</div>
+          <div id="boss-track"><div id="boss-fill"></div></div>
+        </div>
 
         <div id="hud-bottom">
           <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100/100</span></div>
@@ -35,7 +41,27 @@
             <div class="skill" title="Left-click monster = auto attack">⚔️</div>
             <div class="skill" title="Fireball (1) — 2x damage">1<div id="cd-fire" class="cd"></div></div>
             <div class="skill" id="skill-potion" title="Potion (Q) — heal 45%">Q</div>
+            <button class="skill btn" id="btn-inv" title="Inventory (I)">🎒</button>
           </div>
+        </div>
+
+        <div id="inventory-panel" class="side-panel" style="display:none">
+          <div class="panel-head"><b>🎒 Inventory</b><span id="inv-gold">150g</span><button id="inv-close">✕</button></div>
+          <div class="dim" id="gear-stats"></div>
+          <div id="equip-row"></div>
+          <div id="inv-grid"></div>
+          <div class="dim pad">Click bag item: equip (or sell @ trader) · click gear: unequip</div>
+        </div>
+
+        <div id="shop-panel" class="side-panel" style="display:none">
+          <div class="panel-head"><b>🛒 Trader</b><span id="shop-gold">150g</span><button id="shop-close">✕</button></div>
+          <div id="shop-stock"></div>
+          <div class="dim pad">Walk away to close · click a bag item to sell it</div>
+        </div>
+
+        <div id="portal-panel" class="side-panel" style="display:none">
+          <div class="panel-head"><b>🌀 World Portal</b><button id="portal-close">✕</button></div>
+          <div id="portal-list"></div>
         </div>
 
         <div id="death-overlay" style="display:none">
@@ -44,6 +70,25 @@
             <p id="death-sub">Respawn in 2.5s</p>
           </div>
         </div>
+
+        <div id="char-select">
+          <div id="char-card">
+            <h1>⚔️ 3JSGAME</h1>
+            <p class="dim">A tiny Diablo-like. Kill, loot, portal, repeat.</p>
+            <h2>Heroes</h2>
+            <div id="char-list"></div>
+            <h2>New hero</h2>
+            <input id="new-name" maxlength="16" placeholder="Name your hero…" value="Hero" />
+            <div id="class-row">
+              <div class="class-card selected" data-class="warrior"><b>⚔️ Warrior</b><span>Tanky melee</span></div>
+              <div class="class-card" data-class="archer"><b>🏹 Archer</b><span>Fast + crit</span></div>
+              <div class="class-card" data-class="mage"><b>🔥 Mage</b><span>Fire specialist</span></div>
+            </div>
+            <button id="btn-create">Begin in Haven →</button>
+          </div>
+        </div>
+
+        <div id="fade"></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

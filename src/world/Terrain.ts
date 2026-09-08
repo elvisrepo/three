@@ -7,6 +7,7 @@ export interface TerrainResult {
   /** Static obstacles only (trees/rocks) — monsters collide with these, not dummies. */
   statics: CircleCollider[];
   dummies: THREE.Object3D[];
+  walls: THREE.Mesh[];
   bounds: number;
 }
 
@@ -150,5 +151,5 @@ export function createTerrain(scene: THREE.Scene): TerrainResult {
     scene.add(w);
   }
 
-  return { ground, colliders, statics, dummies, bounds: BOUNDS };
+  return { ground, colliders, statics, dummies, walls, bounds: BOUNDS };
 }

@@ -33,6 +33,9 @@ export class Monster {
 
   alive = true;
   state: MonsterState = 'idle';
+  /** Boss flag + display name (set via constructor opts for area bosses). */
+  isBoss = false;
+  displayName = '';
 
   home = new THREE.Vector3();
   attackTimer = 0;
@@ -50,13 +53,34 @@ export class Monster {
   private hpFg: THREE.Sprite;
   private hpFgBaseX = 1.5;
 
-  constructor(spawn: THREE.Vector3, level = 1) {
+  constructor(
+    spawn: THREE.Vector3,
+    level = 1,
+    opts?: {
+      hpMult?: number;
+      dmgMult?: number;
+      xpMult?: number;
+      scale?: number;
+      tint?: number;
+      name?: string;
+      isBoss?: boolean;
+      aggro?: number;
+      respawnDelay?: number;
+    },
+  ) {
     this.level = level;
-    const scale = 1 + (level - 1) * 0.06;
-    this.maxHp = this.hp = Math.round((34 + level * 9) * scale);
-    this.damage = Math.round(5 + level * 1.6);
-    this.xpValue = 9 + level * 3;
-    this.speed = randRange(3.0, 3.8);
+    this.isBoss = opts?.isBoss ?? false;
+    this.displayName = opts?.name ?? '';
+    const sizeScale = (1 + (level - 1) * 0.06) * (opts?.scale ?? 1);
+    this.maxHp = this.hp = Math.round((34 + level * 9) * sizeScale * (opts?.hpMult ?? 1));
+    this.damage = Math.round((5 + level * 1.6) * (opts?.dmgMult ?? 1));
+    this.xpValue = Math.round((9 + level * 3) * (opts?.xpMult ?? 1));
+    this.speed = randRange(3.0, 3.8) * (this.isBoss ? 0.85 : 1);
+    this.aggroRadius = opts?.aggro ?? 11;
+    if (opts?.respawnDelay !== undefined) this.respawnDelay = opts.respawnDelay;
+    if (this.isBoss) this.group.scale.setScalar(opts?.scale ?? 1.6);
+
+    this.bodyMat = new THREE.MeshStandardMaterial({ color: opts?.tint ?? 0x9b5de5, roughness: 0.65 });
 
     this.bodyMat = new THREE.MeshStandardMaterial({ color: 0x9b5de5, roughness: 0.65 });
     this.body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 0.9, 4, 10), this.bodyMat);

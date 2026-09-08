@@ -51,7 +51,13 @@ export class ProjectilePool {
     return n;
   }
 
-  update(dt: number, monsters: Monster[], numbers: DamageNumbers, onKill: (m: Monster) => void): void {
+  update(
+    dt: number,
+    monsters: Monster[],
+    numbers: DamageNumbers,
+    onKill: (m: Monster) => void,
+    onHit?: (dealt: number, m: Monster) => void,
+  ): void {
     for (const bolt of this.bolts) {
       if (!bolt.active) continue;
       const step = bolt.vel.clone().multiplyScalar(dt);
@@ -71,6 +77,7 @@ export class ProjectilePool {
             const crit = Math.random() < 0.15;
             const dmg = Math.max(1, Math.round(bolt.damage * (0.9 + Math.random() * 0.25) * (crit ? 1.5 : 1)));
             const died = m.takeDamage(dmg, crit, numbers);
+            onHit?.(dmg, m);
             if (died) onKill(m);
             hit = true;
             break;

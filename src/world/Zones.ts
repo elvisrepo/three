@@ -1,0 +1,89 @@
+/** Phase 2 — data-driven zones. Add Zone 3+ here without touching game logic. */
+
+export interface MonsterPack {
+  count: number;
+  levelMin: number;
+  levelMax: number;
+}
+
+export interface BossDef {
+  name: string;
+  level: number;
+}
+
+export interface ZoneDef {
+  id: string;
+  name: string;
+  sub: string;
+  minLevel: number;
+  groundColor: number;
+  fogColor: number;
+  wallColor: number;
+  monsters: MonsterPack | null;
+  boss: BossDef | null;
+  hasShop: boolean;
+  hasPortal: boolean;
+  /** Where the player appears on entering. */
+  spawn: [number, number];
+  shopPos: [number, number];
+  portalPos: [number, number];
+  bossPos: [number, number];
+}
+
+export const ZONES: ZoneDef[] = [
+  {
+    id: 'city',
+    name: 'Haven',
+    sub: 'Safe town',
+    minLevel: 1,
+    groundColor: 0x5b6470,
+    fogColor: 0x11141c,
+    wallColor: 0x3a4150,
+    monsters: null,
+    boss: null,
+    hasShop: true,
+    hasPortal: true,
+    spawn: [0, 6],
+    shopPos: [-7, 0],
+    portalPos: [7, 0],
+    bossPos: [0, -20],
+  },
+  {
+    id: 'meadow',
+    name: 'Greenmeadow',
+    sub: 'Lv 1–10',
+    minLevel: 1,
+    groundColor: 0x35793e,
+    fogColor: 0x0b0e14,
+    wallColor: 0x24402a,
+    monsters: { count: 8, levelMin: 1, levelMax: 4 },
+    boss: { name: 'Dire Wolf Alpha', level: 8 },
+    hasShop: false,
+    hasPortal: false,
+    spawn: [0, 18],
+    shopPos: [0, 0],
+    portalPos: [0, 0],
+    bossPos: [12, -14],
+  },
+  {
+    id: 'crypt',
+    name: 'Sunken Crypt',
+    sub: 'Lv 10–20',
+    minLevel: 10,
+    groundColor: 0x3a3f5e,
+    fogColor: 0x0a0a18,
+    wallColor: 0x23263d,
+    monsters: { count: 10, levelMin: 10, levelMax: 13 },
+    boss: { name: 'Crypt Lord', level: 15 },
+    hasShop: false,
+    hasPortal: false,
+    spawn: [0, 18],
+    shopPos: [0, 0],
+    portalPos: [0, 0],
+    bossPos: [-12, -14],
+  },
+];
+
+export function zoneById(id: string): ZoneDef {
+  return ZONES.find((z) => z.id === id) ?? ZONES[0];
+}

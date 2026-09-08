@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { xpNeed, playerLevelUpBonus } from '../combat/Stats';
+import { CLASSES, type StarterClass } from '../data/Classes';
 
 export interface CircleCollider {
   pos: THREE.Vector3;
@@ -26,7 +27,10 @@ export class Player {
   bounds = 29;
   isMoving = false;
 
-  // --- combat / progression ---
+  // --- identity / progression ---
+  charName = 'Hero';
+  baseClass: StarterClass = 'warrior';
+  fireMult = 1;
   level = 1;
   xp = 0;
   xpNext = xpNeed(1);
@@ -37,6 +41,9 @@ export class Player {
   attackCooldown = 0.45;
   attackTimer = 0;
   critChance = 0.1;
+  /** Gear-derived mitigation + sustain (recomputed by Game.refreshGear). */
+  armor = 0;
+  lifesteal = 0;
   potions = 3;
   potionCooldown = 0;
   alive = true;
@@ -97,6 +104,24 @@ export class Player {
 
   clearAttackTarget(): void {
     this.attackTarget = null;
+  }
+
+  /** Apply starter-class base stats (fresh character). */
+  applyClass(cls: StarterClass): void {
+    const def = CLASSES[cls];
+    this.baseClass = cls;
+    this.maxHp = def.maxHp;
+    this.hp = def.maxHp;
+    this.attackDamage = def.damage;
+    this.speed = def.speed;
+    this.critChance = def.crit;
+    this.fireMult = def.fireMult;
+    this.bodyMat.color.setHex(def.color);
+  }
+
+  /** Recolor body (used when loading a saved class). */
+  setBodyColor(hex: number): void {
+    this.bodyMat.color.setHex(hex);
   }
 
   faceInstant(p: THREE.Vector3): void {
