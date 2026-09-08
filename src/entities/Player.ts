@@ -29,6 +29,11 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+/** Dodge dash: brief i-frame dash toward cursor/facing (≈5.5 units). */
+export const DODGE_TIME = 0.25;
+export const DODGE_CD = 2.5;
+const DODGE_SPEED = 22;
+
 export class Player {
   readonly group = new THREE.Group();
   readonly radius = 0.5;
@@ -70,6 +75,10 @@ export class Player {
   alive = true;
   attackTarget: Attackable | null = null;
   swingAnim = 0;
+  /** Dodge dash state (i-frames while dodgeTimer > 0). */
+  dodgeTimer = 0;
+  dodgeCd = 0;
+  private dodgeDir = new THREE.Vector3(0, 0, 1);
 
   private body: THREE.Mesh;
   private bodyMat: THREE.MeshStandardMaterial;
@@ -141,6 +150,20 @@ export class Player {
 
   clearAttackTarget(): void {
     this.attackTarget = null;
+  }
+
+  /** Begin a dodge dash along dir. Returns false if on cooldown/dead. */
+  startDodge(dir: THREE.Vector3): boolean {
+    if (!this.alive || this.dodgeCd > 0 || dir.lengthSq() < 1e-6) return false;
+    this.dodgeDir.copy(dir).setY(0).normalize();
+    this.dodgeTimer = DODGE_TIME;
+    this.dodgeCd = DODGE_CD;
+    this.group.rotation.y = Math.atan2(this.dodgeDir.x, this.dodgeDir.z);
+    return true;
+  }
+
+  isDodging(): boolean {
+    return this.dodgeTimer > 0;
   }
 
   /** Apply starter-class base stats (fresh character). */
@@ -367,7 +390,7 @@ export class Player {
   }
 
   takeDamage(amount: number): boolean {
-    if (!this.alive) return false;
+    if (!this.alive || this.dodgeTimer > 0) return false;
     this.hp -= amount;
     this.flash = 1;
     this.bodyMat.emissive.setHex(0xff2222);
@@ -435,6 +458,8 @@ export class Player {
       m.emissive.setHex(0x000000);
       m.emissiveIntensity = 0;
     }
+    this.dodgeTimer = 0;
+    this.dodgeCd = 0;
     this.deathPlayed = false;
     this.lastSwing = 0;
     if (this.mixer && this.animIdle) {
@@ -447,6 +472,7 @@ export class Player {
     this.elapsed += dt;
     this.attackTimer = Math.max(0, this.attackTimer - dt);
     this.potionCooldown = Math.max(0, this.potionCooldown - dt);
+    this.dodgeCd = Math.max(0, this.dodgeCd - dt);
     if (this.buffTimer > 0) {
       this.buffTimer -= dt;
       if (this.buffTimer <= 0) this.buffDmgMult = 1;
@@ -494,7 +520,13 @@ export class Player {
 
     const move = new THREE.Vector3();
 
-    if (keyboardDir.lengthSq() > 0.0001) {
+    const dodging = this.dodgeTimer > 0;
+    if (dodging) {
+      // Dash overrides steering (click target resumes after); shares the
+      // collider push-out + clamp path below.
+      this.dodgeTimer = Math.max(0, this.dodgeTimer - dt);
+      move.copy(this.dodgeDir);
+    } else if (keyboardDir.lengthSq() > 0.0001) {
       this.target = null;
       move.copy(keyboardDir).normalize();
     } else if (this.target) {
@@ -516,7 +548,7 @@ export class Player {
 
     this.isMoving = true;
     if (this.mixer) this.playLoop('run');
-    this.group.position.addScaledVector(move, this.speed * dt);
+    this.group.position.addScaledVector(move, (dodging ? DODGE_SPEED : this.speed) * dt);
 
     for (const c of colliders) {
       const dx = this.group.position.x - c.pos.x;

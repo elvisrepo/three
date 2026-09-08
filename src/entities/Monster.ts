@@ -15,9 +15,6 @@ export type BossSpecial = 'slam' | 'roar';
 
 const _steer = new THREE.Vector3();
 
-/** Seconds from swing trigger to fist impact (single punch at 1.25x). */
-const MELEE_IMPACT_DELAY = 0.3;
-
 function randRange(a: number, b: number): number {
   return a + Math.random() * (b - a);
 }
@@ -54,6 +51,8 @@ export class Monster {
   /** Delayed melee impact (damage lands when the fist does, not at windup). */
   private strikeTimer = -1;
   private strikeDamage = 0;
+  /** Windup length: long enough to react to on bosses, snappy on trash. */
+  private strikeDelay = 0.25;
   wanderTarget = new THREE.Vector3();
   wanderTimer = 0;
   deadTime = 0;
@@ -185,6 +184,8 @@ export class Monster {
     this.wanderTarget.copy(this.home);
 
     if (opts?.model && !this.goblin) {
+      // Skinned boss swings read slower — give the windup dodge time.
+      this.strikeDelay = 0.45;
       void this.loadBossModel(opts.model);
     }
   }
@@ -249,7 +250,7 @@ export class Monster {
       // instead of snapping each loop. (Swap for plain "Idle" later.)
       { file: 'idle.fbx', set: (a) => (this.mIdle = a), loop: THREE.LoopPingPong, speed: 1 },
       { file: 'walk.fbx', set: (a) => (this.mWalk = a), loop: THREE.LoopRepeat, speed: 1 },
-      { file: 'punch.fbx', set: (a) => (this.mPunch = a), loop: THREE.LoopOnce, speed: 1.25 },
+      { file: 'punch.fbx', set: (a) => (this.mPunch = a), loop: THREE.LoopOnce, speed: 0.9 },
       { file: 'slam.fbx', set: (a) => (this.mSlam = a), loop: THREE.LoopOnce, speed: 1 },
       { file: 'roar.fbx', set: (a) => (this.mRoar = a), loop: THREE.LoopOnce, speed: 1 },
       { file: 'hit.fbx', set: (a) => (this.mHit = a), loop: THREE.LoopOnce, speed: 1.6 },
@@ -478,7 +479,7 @@ export class Monster {
           this.attackAnim = 1;
           // Commit the roll at windup, land it at impact — matches the fist.
           this.strikeDamage = rollMonsterDamage(this.damage);
-          this.strikeTimer = MELEE_IMPACT_DELAY;
+          this.strikeTimer = this.strikeDelay;
         }
       }
     } else {

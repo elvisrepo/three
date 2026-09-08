@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Player } from '../entities/Player';
+import { Player, DODGE_CD } from '../entities/Player';
 import { Monster } from '../entities/Monster';
 import { BossController } from '../entities/Boss';
 import { DamageNumbers } from '../entities/DamageNumbers';
@@ -167,6 +167,7 @@ export class Game {
   private elSaveState: HTMLElement | null = null;
   private elFireCd: HTMLElement | null = null;
   private elBlinkCd: HTMLElement | null = null;
+  private elDodgeCd: HTMLElement | null = null;
   private elPotion: HTMLElement | null = null;
   private elTpSlot: HTMLElement | null = null;
   private elTpCount: HTMLElement | null = null;
@@ -209,6 +210,7 @@ export class Game {
   private elCdnSkill3: HTMLElement | null = null;
   private elCdnFire: HTMLElement | null = null;
   private elCdnBlink: HTMLElement | null = null;
+  private elCdnDodge: HTMLElement | null = null;
   private elCdnSkill2: HTMLElement | null = null;
   private elCompare: HTMLElement | null = null;
   private elXpRate: HTMLElement | null = null;
@@ -444,6 +446,7 @@ export class Game {
     this.elSaveState = $('stat-save');
     this.elFireCd = $('cd-fire');
     this.elBlinkCd = $('cd-blink');
+    this.elDodgeCd = $('cd-dodge');
     this.elPotion = $('skill-potion');
     this.elToast = $('hud-toast');
     this.elDeath = $('death-overlay');
@@ -482,6 +485,7 @@ export class Game {
     this.elCdnSkill3 = $('cdn-skill3');
     this.elCdnFire = $('cdn-fire');
     this.elCdnBlink = $('cdn-blink');
+    this.elCdnDodge = $('cdn-dodge');
     this.elCdnSkill2 = $('cdn-skill2');
     this.elTpSlot = $('skill-tp');
     this.elTpCount = $('tp-count');
@@ -1064,6 +1068,7 @@ export class Game {
       else if (e.code === b.bag) this.toggleInventory();
       else if (e.code === b.char) this.toggleChar();
       else if (e.code === b.blink) this.tryBlink();
+      else if (e.code === b.dodge) this.tryDodge();
       else if (e.code === b.interact) this.interact();
       else if (e.code === b.tp) this.useScrollKey();
       else if (e.code === b.mute) this.toggleMute();
@@ -1321,6 +1326,16 @@ export class Game {
     this.numbers.spawn(dest, '✨', { color: '#7dffd4', scale: 1.2 });
     this.effects.burst(dest.x, 1.2, dest.z, { color: 0x7dffd4, count: 12, speed: 4, life: 0.45, size: 1 });
     this.blinkTimer = BLINK_CD;
+    this.sound.blink();
+  }
+
+  private tryDodge(): void {
+    if (!this.started || !this.player.alive) return;
+    // Dash toward cursor (aimDir falls back to facing, which tracks WASD).
+    const dir = this.aimDir();
+    if (!dir) return;
+    if (!this.player.startDodge(dir)) return;
+    this.effects.burst(this.player.position.x, 0.6, this.player.position.z, { color: 0xbfd9ff, count: 8, speed: 4, life: 0.3, size: 0.8 });
     this.sound.blink();
   }
 
@@ -1710,6 +1725,10 @@ export class Game {
 
   private damagePlayer(raw: number): boolean {
     if (!this.player.alive) return false;
+    if (this.player.isDodging()) {
+      this.numbers.spawn(this.player.position, 'dodged', { color: '#bfd9ff', scale: 1.1 });
+      return false;
+    }
     const taken = this.mitigate(raw);
     const died = this.player.takeDamage(taken);
     this.numbers.spawn(this.player.position, `${taken}`, { color: '#ff6b6b' });
@@ -2566,6 +2585,10 @@ export class Game {
       const frac = this.blinkTimer / BLINK_CD;
       this.elBlinkCd.style.height = `${Math.round(frac * 100)}%`;
     }
+    if (this.elDodgeCd) {
+      const frac = this.player.dodgeCd / DODGE_CD;
+      this.elDodgeCd.style.height = `${Math.round(frac * 100)}%`;
+    }
     if (this.elSkill2Cd) {
       const frac = this.skillTimer / this.skillCdMax;
       this.elSkill2Cd.style.height = `${Math.round(frac * 100)}%`;
@@ -2577,6 +2600,7 @@ export class Game {
     if (this.elCdnSkill3) this.elCdnSkill3.textContent = this.skill3Timer > 0.05 ? `${Math.ceil(this.skill3Timer)}` : '';
     if (this.elCdnFire) this.elCdnFire.textContent = this.fireTimer > 0.05 ? `${Math.ceil(this.fireTimer)}` : '';
     if (this.elCdnBlink) this.elCdnBlink.textContent = this.blinkTimer > 0.05 ? `${Math.ceil(this.blinkTimer)}` : '';
+    if (this.elCdnDodge) this.elCdnDodge.textContent = this.player.dodgeCd > 0.05 ? `${Math.ceil(this.player.dodgeCd)}` : '';
     if (this.elCdnSkill2) this.elCdnSkill2.textContent = this.skillTimer > 0.05 ? `${Math.ceil(this.skillTimer)}` : '';
 
     this.hudTimer -= 1 / 60;

@@ -1,7 +1,7 @@
 /** Remappable action keybinds (movement keys stay fixed: WASD/arrows). */
 
 export type BindAction =
-  | 'fire' | 'job' | 'ult' | 'potion' | 'blink'
+  | 'fire' | 'job' | 'ult' | 'potion' | 'blink' | 'dodge'
   | 'interact' | 'tp' | 'bag' | 'char' | 'mute';
 
 export const BIND_LABELS: Record<BindAction, string> = {
@@ -10,6 +10,7 @@ export const BIND_LABELS: Record<BindAction, string> = {
   ult: 'Ultimate',
   potion: 'Potion',
   blink: 'Blink',
+  dodge: 'Dodge',
   interact: 'Interact',
   tp: 'Town portal',
   bag: 'Inventory',
@@ -18,7 +19,7 @@ export const BIND_LABELS: Record<BindAction, string> = {
 };
 
 export const BIND_ORDER: BindAction[] = [
-  'fire', 'job', 'ult', 'potion', 'blink', 'interact', 'tp', 'bag', 'char', 'mute',
+  'fire', 'job', 'ult', 'potion', 'blink', 'dodge', 'interact', 'tp', 'bag', 'char', 'mute',
 ];
 
 export const DEFAULT_BINDS: Record<BindAction, string> = {
@@ -27,6 +28,7 @@ export const DEFAULT_BINDS: Record<BindAction, string> = {
   ult: 'Digit3',
   potion: 'KeyQ',
   blink: 'KeyE',
+  dodge: 'Space',
   interact: 'KeyF',
   tp: 'KeyT',
   bag: 'KeyI',
