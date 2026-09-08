@@ -345,12 +345,6 @@ html, body, #app {
 
 .equip-slot.empty { opacity: 0.4; border-style: dashed; }
 
-#inv-grid {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 5px;
-}
-
 .inv-cell {
   aspect-ratio: 1;
   display: flex;
@@ -677,3 +671,61 @@ html, body, #app {
 .job-bonus { color: #5dff6b; font-weight: 700; font-size: 12px; }
 
 .job-skill { font-size: 12px; }
+
+/* ---- pause menu ---- */
+
+#pause-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 12, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 15;
+}
+
+#pause-card {
+  width: min(420px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: #0d1322;
+  border: 1px solid rgba(125, 255, 212, 0.4);
+  border-radius: 14px;
+  padding: 20px 22px;
+  text-align: center;
+}
+
+#pause-card h1 { margin: 0 0 10px; letter-spacing: 3px; }
+#pause-card h2 { margin: 14px 0 8px; font-size: 13px; color: #9fb2d8; text-transform: uppercase; letter-spacing: 1px; }
+
+.pause-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+#volume-slider { flex: 1; pointer-events: auto; accent-color: #7dffd4; }
+
+.ctl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 2px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+}
+
+.ctl-row button { min-width: 76px; }
+
+/* ---- stash (shares inventory cell styles) ---- */
+
+#stash-panel { left: 12px; top: 190px; width: 300px; }
+
+#inv-grid, #stash-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
+}

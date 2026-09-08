@@ -27,7 +27,8 @@ import {
 } from '../items/Items';
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
 import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL } from '../data/Jobs';
-import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, type CharacterSave } from './SaveManager';
+import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
+import { getBinds, setBind, codeLabel, BIND_LABELS, BIND_ORDER, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
 
 const CAM_FOV = 38;
@@ -90,11 +91,17 @@ export class Game {
   private sound = new SoundManager();
   private inventory = new Inventory();
   private equipment = new Equipment();
+  /** Account-wide shared stash (separate localStorage key, all heroes). */
+  private stash = new Inventory();
   private prevGear: GearBonus = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
 
   private shopNpc!: THREE.Group;
   private portalMesh!: THREE.Group;
   private sanctum!: THREE.Group;
+  private chest!: THREE.Group;
+  private paused = false;
+  private stashOpen = false;
+  private rebindAction: BindAction | null = null;
   private shopStock: ItemInstance[] = [];
 
   private dirLight!: THREE.DirectionalLight;
@@ -189,6 +196,10 @@ export class Game {
   private elImportStatus: HTMLElement | null = null;
   private elCharPanel: HTMLElement | null = null;
   private elCharBody: HTMLElement | null = null;
+  private elPause: HTMLElement | null = null;
+  private elControlsList: HTMLElement | null = null;
+  private elStashPanel: HTMLElement | null = null;
+  private elStashGrid: HTMLElement | null = null;
   private elJobModal: HTMLElement | null = null;
   private elJobCards: HTMLElement | null = null;
   private elSkill2: HTMLElement | null = null;
@@ -274,6 +285,7 @@ export class Game {
     this.effects = new Effects(this.scene);
     this.projectiles = new ProjectilePool(this.scene, 24);
     this.loot = new LootManager(this.scene);
+    this.stash.fromJSON(loadSharedStash(), 0);
   }
 
   private makeLabel(text: string): THREE.Sprite {
@@ -338,6 +350,32 @@ export class Game {
     this.scene.add(portal);
     this.portalMesh = portal;
 
+    // Shared stash chest (Haven)
+    const chest = new THREE.Group();
+    const cbody = new THREE.Mesh(
+      new THREE.BoxGeometry(1.2, 0.8, 0.8),
+      new THREE.MeshStandardMaterial({ color: 0x6b4a2f, roughness: 0.8 }),
+    );
+    cbody.position.y = 0.4;
+    cbody.castShadow = true;
+    const clid = new THREE.Mesh(
+      new THREE.BoxGeometry(1.25, 0.25, 0.85),
+      new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.7 }),
+    );
+    clid.position.y = 0.9;
+    clid.castShadow = true;
+    const ctrim = new THREE.Mesh(
+      new THREE.BoxGeometry(1.28, 0.12, 0.88),
+      new THREE.MeshStandardMaterial({ color: 0xd4a017, emissive: 0x6b4a00, emissiveIntensity: 0.5, roughness: 0.4, metalness: 0.6 }),
+    );
+    ctrim.position.y = 0.72;
+    const chlabel = this.makeLabel('📦 STASH');
+    chlabel.position.y = 2.2;
+    chest.add(cbody, clid, ctrim, chlabel);
+    chest.userData.interact = 'stash';
+    this.scene.add(chest);
+    this.chest = chest;
+
     // Job sanctum (Haven): walkable golden circle, advancement happens inside it
     const sanctum = new THREE.Group();
     const sring = new THREE.Mesh(
@@ -369,6 +407,7 @@ export class Game {
     const extra: { pos: THREE.Vector3; radius: number }[] = [];
     if (this.shopNpc.visible) extra.push({ pos: this.shopNpc.position, radius: 0.9 });
     if (this.portalMesh.visible) extra.push({ pos: this.portalMesh.position, radius: 1.1 });
+    if (this.chest.visible) extra.push({ pos: this.chest.position, radius: 0.9 });
     // Note: terrain colliders (statics + dummies) are the stable base array.
     this.colliders = [...this.statics, ...extra];
   }
@@ -430,6 +469,10 @@ export class Game {
     this.elImportStatus = $('import-status');
     this.elCharPanel = $('char-panel');
     this.elCharBody = $('char-body');
+    this.elPause = $('pause-overlay');
+    this.elControlsList = $('controls-list');
+    this.elStashPanel = $('stash-panel');
+    this.elStashGrid = $('stash-grid');
     this.elJobModal = $('job-modal');
     this.elJobCards = $('job-cards');
     this.elSkill2 = $('skill-job');
@@ -458,6 +501,10 @@ export class Game {
       if (!uid) return;
       if (this.shopOpen) {
         this.sellItem(uid);
+        return;
+      }
+      if (this.stashOpen) {
+        this.moveToStash(uid);
         return;
       }
       const it = this.inventory.find(uid);
@@ -524,6 +571,31 @@ export class Game {
     document.getElementById('btn-inv')?.addEventListener('click', () => this.toggleInventory());
     document.getElementById('btn-mute')?.addEventListener('click', () => this.toggleMute());
     document.getElementById('btn-chars')?.addEventListener('click', () => this.openCharSelect());
+    document.getElementById('btn-resume')?.addEventListener('click', () => this.togglePause(false));
+    document.getElementById('btn-pause-heroes')?.addEventListener('click', () => {
+      this.togglePause(false);
+      this.openCharSelect();
+    });
+    document.getElementById('stash-close')?.addEventListener('click', () => this.closeStash());
+    const vol = document.getElementById('volume-slider') as HTMLInputElement | null;
+    if (vol) {
+      vol.value = String(Math.round(this.sound.volume * 100));
+      vol.addEventListener('input', () => this.sound.setVolume(Number(vol.value) / 100));
+    }
+    this.elControlsList?.addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest('[data-rebind]') as HTMLElement | null;
+      const action = t?.dataset.rebind as BindAction | undefined;
+      if (!action) return;
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      this.rebindAction = action;
+      this.sound.uiClick();
+      this.renderControls();
+    });
+    this.elStashGrid?.addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest('[data-stash]') as HTMLElement | null;
+      const uid = t?.dataset.stash;
+      if (uid) this.takeFromStash(uid);
+    });
     document.getElementById('skill-tp')?.addEventListener('click', () => this.useScrollKey());
     document.getElementById('btn-char')?.addEventListener('click', () => this.toggleChar());
     document.getElementById('btn-save')?.addEventListener('click', () => {
@@ -646,6 +718,7 @@ export class Game {
   /** Back to hero select mid-game: saves first, freezes the sim behind the overlay. */
   private openCharSelect(): void {
     this.autosave();
+    this.togglePause(false);
     this.closeAllPanels();
     if (this.elDeath) this.elDeath.style.display = 'none';
     this.started = false;
@@ -824,9 +897,11 @@ export class Game {
     this.shopNpc.position.set(def.shopPos[0], 0, def.shopPos[1]);
     this.portalMesh.position.set(def.portalPos[0], 0, def.portalPos[1]);
     this.sanctum.position.set(def.sanctumPos[0], 0, def.sanctumPos[1]);
+    this.chest.position.set(def.chestPos[0], 0, def.chestPos[1]);
     this.shopNpc.visible = def.hasShop;
     this.portalMesh.visible = def.hasPortal;
     this.sanctum.visible = def.id === 'city';
+    this.chest.visible = def.id === 'city';
     this.rebuildColliders();
 
     if (def.monsters) this.spawnZoneMonsters(def);
@@ -842,6 +917,7 @@ export class Game {
     this.snapCamera();
     this.closeShop();
     this.closePortal();
+    this.closeStash();
     this.updateBossBar();
     if (this.started) {
       this.showToast(`Entered ${def.name} — ${def.sub}`);
@@ -958,25 +1034,38 @@ export class Game {
 
     window.addEventListener('keydown', (e) => {
       const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      // Rebind capture (volume slider focused is fine — Escape still cancels).
+      if (this.rebindAction) {
+        e.preventDefault();
+        if (e.code !== 'Escape') {
+          setBind(this.rebindAction, e.code);
+          this.showToast(`${BIND_LABELS[this.rebindAction]} → ${codeLabel(e.code)}`);
+        }
+        this.rebindAction = null;
+        this.renderControls();
+        return;
+      }
+      if ((tag === 'INPUT' || tag === 'TEXTAREA') && e.code !== 'Escape') return;
       if (e.repeat) return;
       this.sound.unlock();
       this.keys.add(e.code);
-      if (e.code === 'KeyM') {
-        this.toggleMute();
+      if (e.code === 'Escape') {
+        if (this.anyUiOpen()) this.closeAllPanels();
+        else if (this.started) this.togglePause();
         return;
       }
-      if (!this.started) return;
-      if (e.code === 'Digit1') this.tryFireball();
-      if (e.code === 'Digit2') this.castJobSkill();
-      if (e.code === 'Digit3') this.castUlt();
-      if (e.code === 'KeyQ') this.tryPotion();
-      if (e.code === 'KeyI') this.toggleInventory();
-      if (e.code === 'KeyC') this.toggleChar();
-      if (e.code === 'KeyE') this.tryBlink();
-      if (e.code === 'KeyF') this.interact();
-      if (e.code === 'KeyT') this.useScrollKey();
-      if (e.code === 'Escape') this.closeAllPanels();
+      if (!this.started || this.paused) return;
+      const b = getBinds();
+      if (e.code === b.fire) this.tryFireball();
+      else if (e.code === b.job) this.castJobSkill();
+      else if (e.code === b.ult) this.castUlt();
+      else if (e.code === b.potion) this.tryPotion();
+      else if (e.code === b.bag) this.toggleInventory();
+      else if (e.code === b.char) this.toggleChar();
+      else if (e.code === b.blink) this.tryBlink();
+      else if (e.code === b.interact) this.interact();
+      else if (e.code === b.tp) this.useScrollKey();
+      else if (e.code === b.mute) this.toggleMute();
     });
     window.addEventListener('keyup', (e) => {
       this.keys.delete(e.code);
@@ -1009,11 +1098,12 @@ export class Game {
     return null;
   }
 
-  private findInteractFromHit(obj: THREE.Object3D | null): 'shop' | 'portal' | 'sanctum' | null {
+  private findInteractFromHit(obj: THREE.Object3D | null): 'shop' | 'portal' | 'sanctum' | 'stash' | null {
     let o: THREE.Object3D | null = obj;
     while (o) {
-      if (o.userData.interact === 'shop' || o.userData.interact === 'portal' || o.userData.interact === 'sanctum') {
-        return o.userData.interact as 'shop' | 'portal' | 'sanctum';
+      const k = o.userData.interact as string | undefined;
+      if (k === 'shop' || k === 'portal' || k === 'sanctum' || k === 'stash') {
+        return k;
       }
       o = o.parent;
     }
@@ -1044,11 +1134,12 @@ export class Game {
       }
     }
 
-    // 2) Shop / portal / sanctum
+    // 2) Shop / portal / sanctum / stash
     const npcMeshes: THREE.Object3D[] = [];
     if (this.shopNpc.visible) npcMeshes.push(this.shopNpc);
     if (this.portalMesh.visible) npcMeshes.push(this.portalMesh);
     if (this.sanctum.visible) npcMeshes.push(this.sanctum);
+    if (this.chest.visible) npcMeshes.push(this.chest);
     if (npcMeshes.length > 0) {
       const npcHits = this.raycaster.intersectObjects(npcMeshes, true);
       if (npcHits.length > 0) {
@@ -1069,6 +1160,12 @@ export class Game {
           this.player.clearAttackTarget();
           this.trySanctum();
           this.showMarker(this.sanctum.position, 0xffd21f);
+          return;
+        }
+        if (kind === 'stash') {
+          this.player.clearAttackTarget();
+          this.openStash();
+          this.showMarker(this.chest.position, 0xd4a017);
           return;
         }
       }
@@ -1136,6 +1233,7 @@ export class Game {
     if (this.shopNpc.visible) npcMeshes.push(this.shopNpc);
     if (this.portalMesh.visible) npcMeshes.push(this.portalMesh);
     if (this.sanctum.visible) npcMeshes.push(this.sanctum);
+    if (this.chest.visible) npcMeshes.push(this.chest);
     const lootMeshes = this.loot.drops.map((d) => d.group);
     const hits = this.raycaster.intersectObjects([...liveGroups, ...npcMeshes, ...lootMeshes, ...this.dummies], true);
     this.renderer.domElement.style.cursor = hits.length > 0 ? 'pointer' : 'crosshair';
@@ -1707,6 +1805,7 @@ export class Game {
   }
 
   private openShop(): void {
+    this.closeStash();
     this.shopOpen = true;
     this.invOpen = true; // selling needs the bag visible
     this.sound.uiClick();
@@ -1720,6 +1819,7 @@ export class Game {
   }
 
   private openPortal(): void {
+    this.closeStash();
     this.portalOpen = true;
     this.sound.uiClick();
     this.renderPortal();
@@ -1735,12 +1835,96 @@ export class Game {
     this.shopOpen = false;
     this.portalOpen = false;
     this.charOpen = false;
+    this.stashOpen = false;
     this.closeJobModal();
     this.hideCompare();
     this.renderInventory();
     this.renderShop();
     this.renderPortal();
     this.renderChar();
+    this.renderStash();
+  }
+
+  private togglePause(force?: boolean): void {
+    if (!this.started && force !== false) return;
+    this.paused = force ?? !this.paused;
+    if (this.elPause) this.elPause.style.display = this.paused ? 'flex' : 'none';
+    if (this.paused) {
+      this.renderControls();
+      this.syncMuteIcon();
+      const vol = document.getElementById('volume-slider') as HTMLInputElement | null;
+      if (vol) vol.value = String(Math.round(this.sound.volume * 100));
+    }
+  }
+
+  private anyUiOpen(): boolean {
+    return this.invOpen || this.shopOpen || this.portalOpen || this.charOpen || this.stashOpen ||
+      this.elJobModal?.style.display === 'flex';
+  }
+
+  private renderControls(): void {
+    if (!this.elControlsList) return;
+    const binds = getBinds();
+    this.elControlsList.innerHTML = BIND_ORDER.map((a) => {
+      const listening = this.rebindAction === a;
+      return `<div class="ctl-row"><span>${BIND_LABELS[a]}</span>` +
+        `<button data-rebind="${a}">${listening ? 'press key…' : codeLabel(binds[a])}</button></div>`;
+    }).join('');
+  }
+
+  private openStash(): void {
+    this.closeShop();
+    this.closePortal();
+    this.stashOpen = true;
+    this.invOpen = true;
+    this.sound.uiClick();
+    this.renderStash();
+    this.renderInventory();
+  }
+
+  private closeStash(): void {
+    this.stashOpen = false;
+    this.renderStash();
+  }
+
+  private renderStash(): void {
+    if (this.elStashPanel) this.elStashPanel.style.display = this.stashOpen ? 'block' : 'none';
+    if (!this.stashOpen || !this.elStashGrid) return;
+    this.elStashGrid.innerHTML = this.stash.slots.map((it) => {
+      if (!it) return '<div class="inv-cell empty"></div>';
+      return `<div class="inv-cell r-${it.rarity}" data-stash="${it.uid}" title="${this.itemTooltip(it)}">${it.icon}</div>`;
+    }).join('');
+  }
+
+  private moveToStash(uid: string): void {
+    const it = this.inventory.remove(uid);
+    if (!it) return;
+    if (!this.stash.add(it)) {
+      this.inventory.add(it);
+      this.showToast('Stash is full!');
+      return;
+    }
+    this.sound.equip();
+    saveSharedStash(this.stash.toJSON());
+    this.renderStash();
+    this.renderInventory();
+  }
+
+  private takeFromStash(uid: string): void {
+    const idx = this.stash.slots.findIndex((s) => s?.uid === uid);
+    if (idx === -1) return;
+    const it = this.stash.slots[idx];
+    if (!it) return;
+    this.stash.slots[idx] = null;
+    if (!this.inventory.add(it)) {
+      this.stash.slots[idx] = it;
+      this.showToast('Inventory full!');
+      return;
+    }
+    this.sound.equip();
+    saveSharedStash(this.stash.toJSON());
+    this.renderStash();
+    this.renderInventory();
   }
 
   // ---------- character panel ----------
@@ -2073,11 +2257,12 @@ export class Game {
     }, 280);
   }
 
-  private nearestInteract(): 'shop' | 'portal' | 'sanctum' | null {
+  private nearestInteract(): 'shop' | 'portal' | 'sanctum' | 'stash' | null {
     if (this.currentZoneId !== 'city' || !this.player.alive) return null;
     if (this.shopNpc.visible && this.player.position.distanceTo(this.shopNpc.position) < INTERACT_RADIUS) return 'shop';
     if (this.portalMesh.visible && this.player.position.distanceTo(this.portalMesh.position) < INTERACT_RADIUS) return 'portal';
     if (this.sanctum.visible && this.player.position.distanceTo(this.sanctum.position) < 2.9) return 'sanctum';
+    if (this.chest.visible && this.player.position.distanceTo(this.chest.position) < INTERACT_RADIUS) return 'stash';
     return null;
   }
 
@@ -2086,6 +2271,7 @@ export class Game {
     if (kind === 'shop') this.openShop();
     else if (kind === 'portal') this.openPortal();
     else if (kind === 'sanctum') this.trySanctum();
+    else if (kind === 'stash') this.openStash();
   }
 
   private toggleMute(): void {
@@ -2146,6 +2332,12 @@ export class Game {
 
     // Behind the character-select overlay: render the city, simulate nothing.
     if (!this.started) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+
+    // Paused: frozen frame, sim untouched (music scheduler also holds).
+    if (this.paused) {
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -2314,11 +2506,13 @@ export class Game {
       }
     }
 
-    // Walked away from the trader/portal? Close their panels.
+    // Walked away from the trader/portal/stash? Close their panels.
     if (this.shopOpen && this.shopNpc.visible &&
       this.player.position.distanceTo(this.shopNpc.position) > 4.5) this.closeShop();
     if (this.portalOpen && this.portalMesh.visible &&
       this.player.position.distanceTo(this.portalMesh.position) > 4.5) this.closePortal();
+    if (this.stashOpen && this.chest.visible &&
+      this.player.position.distanceTo(this.chest.position) > 4.5) this.closeStash();
 
     // Camera follow (+ shake)
     this.desiredCam.copy(this.player.position).addScaledVector(CAM_DIR, this.camDist);
@@ -2427,16 +2621,20 @@ export class Game {
       if (this.elTpSlot) this.elTpSlot.classList.toggle('locked', n <= 0);
     }
     const near = this.nearestInteract();
+    const interactKey = codeLabel(getBinds().interact);
     if (this.elPrompt) {
       if (near === 'shop') {
-        this.elPrompt.textContent = 'F — Trade';
+        this.elPrompt.textContent = `${interactKey} — Trade`;
         this.elPrompt.style.opacity = '1';
       } else if (near === 'portal') {
-        this.elPrompt.textContent = 'F — Travel';
+        this.elPrompt.textContent = `${interactKey} — Travel`;
         this.elPrompt.style.opacity = '1';
       } else if (near === 'sanctum') {
         const ready = this.player.job === null && this.player.level >= ADVANCE_LEVEL;
-        this.elPrompt.textContent = ready ? 'F — Advance job ⭐' : 'F — Sanctum (Lv10)';
+        this.elPrompt.textContent = ready ? `${interactKey} — Advance job ⭐` : `${interactKey} — Sanctum (Lv10)`;
+        this.elPrompt.style.opacity = '1';
+      } else if (near === 'stash') {
+        this.elPrompt.textContent = `${interactKey} — Stash`;
         this.elPrompt.style.opacity = '1';
       } else {
         this.elPrompt.style.opacity = '0';
@@ -2476,10 +2674,15 @@ export class Game {
       const [mx, mz] = toMap(d.group.position.x, d.group.position.z);
       ctx.fillRect(mx - 1.5, mz - 1.5, 3, 3);
     }
-    // Trader (green square) + portal (cyan diamond)
+    // Trader (green square) + portal (cyan diamond) + stash (gold square)
     if (this.shopNpc.visible) {
       const [mx, mz] = toMap(this.shopNpc.position.x, this.shopNpc.position.z);
       ctx.fillStyle = '#2ecc71';
+      ctx.fillRect(mx - 3, mz - 3, 6, 6);
+    }
+    if (this.chest.visible) {
+      const [mx, mz] = toMap(this.chest.position.x, this.chest.position.z);
+      ctx.fillStyle = '#d4a017';
       ctx.fillRect(mx - 3, mz - 3, 6, 6);
     }
     if (this.portalMesh.visible) {

@@ -32,6 +32,8 @@ export interface ZoneDef {
   bossPos: [number, number];
   /** Job-advancement sanctum circle (Haven only, [0,0] = unused). */
   sanctumPos: [number, number];
+  /** Shared stash chest (Haven only, [0,0] = unused). */
+  chestPos: [number, number];
 }
 
 export const ZONES: ZoneDef[] = [
@@ -53,6 +55,7 @@ export const ZONES: ZoneDef[] = [
     portalPos: [7, 0],
     bossPos: [0, -20],
     sanctumPos: [0, -8],
+    chestPos: [-4, -6],
   },
   {
     id: 'meadow',
@@ -72,6 +75,7 @@ export const ZONES: ZoneDef[] = [
     portalPos: [0, 0],
     bossPos: [12, -14],
     sanctumPos: [0, 0],
+    chestPos: [0, 0],
   },
   {
     id: 'crypt',
@@ -91,6 +95,7 @@ export const ZONES: ZoneDef[] = [
     portalPos: [0, 0],
     bossPos: [-12, -14],
     sanctumPos: [0, 0],
+    chestPos: [0, 0],
   },
   {
     id: 'ember',
@@ -110,6 +115,7 @@ export const ZONES: ZoneDef[] = [
     portalPos: [0, 0],
     bossPos: [0, -18],
     sanctumPos: [0, 0],
+    chestPos: [0, 0],
   },
 ];
 

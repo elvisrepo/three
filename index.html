@@ -18,7 +18,7 @@
           <div><b>1</b> fireball · <b>2</b> job skill (Lv10+) · <b>3</b> ultimate (Lv20+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
           <div><b>E</b> blink · <b>T</b> town portal · <b>F</b> talk/portal</div>
           <div><b>WASD</b> move · <b>wheel</b> zoom (out to 40) · hover gear to compare</div>
-          <div>👑 on minimap = live boss · <b>M</b> mute</div>
+          <div>👑 on minimap = live boss · <b>M</b> mute · <b>Esc</b> pause/menu</div>
         </div>
         <div id="hud-stats" class="panel">
           <div>📍 <b id="stat-zone">Haven</b> · Lv <b id="stat-level">1</b> · EXP <span id="stat-xprate">x1</span></div>
@@ -77,6 +77,26 @@
         <div id="portal-panel" class="side-panel" style="display:none">
           <div class="panel-head"><b>🌀 World Portal</b><button id="portal-close">✕</button></div>
           <div id="portal-list"></div>
+        </div>
+
+        <div id="stash-panel" class="side-panel" style="display:none">
+          <div class="panel-head"><b>📦 Stash (shared)</b><button id="stash-close">✕</button></div>
+          <div id="stash-grid"></div>
+          <div class="dim pad">Click bag item: store · click stash item: take · walk away to close</div>
+        </div>
+
+        <div id="pause-overlay" style="display:none">
+          <div id="pause-card">
+            <h1>⏸ PAUSED</h1>
+            <div class="pause-row">
+              <button id="btn-resume">Resume (Esc)</button>
+              <button id="btn-pause-heroes">💾 Heroes</button>
+            </div>
+            <div class="pause-row"><span>🔊 Volume</span><input type="range" id="volume-slider" min="0" max="100" value="60" /></div>
+            <h2>Controls — click, then press a key</h2>
+            <div id="controls-list"></div>
+            <p class="dim">Movement (WASD/arrows) and zoom are fixed.</p>
+          </div>
         </div>
 
         <div id="death-overlay" style="display:none">

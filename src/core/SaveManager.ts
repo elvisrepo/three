@@ -73,4 +73,31 @@ export function makeCharId(): string {
   return `c${Date.now().toString(36)}${Math.floor(Math.random() * 46656).toString(36)}`;
 }
 
+const STASH_KEY = 'arpg.stash.v1';
+const STASH_SIZE = 24;
+
+/** Account-wide shared stash (all heroes, not exported with hero files). */
+export function loadSharedStash(): (ItemInstance | null)[] {
+  try {
+    const raw = localStorage.getItem(STASH_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw) as (ItemInstance | null)[];
+      if (Array.isArray(arr)) {
+        return Array.from({ length: STASH_SIZE }, (_, i) => arr[i] ?? null);
+      }
+    }
+  } catch {
+    /* corrupted stash — start empty */
+  }
+  return Array.from({ length: STASH_SIZE }, () => null);
+}
+
+export function saveSharedStash(slots: (ItemInstance | null)[]): void {
+  try {
+    localStorage.setItem(STASH_KEY, JSON.stringify(slots.slice(0, STASH_SIZE)));
+  } catch {
+    // storage full/blocked — stash just won't persist
+  }
+}
+
 export { VER as SAVE_VERSION };

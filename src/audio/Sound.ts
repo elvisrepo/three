@@ -39,11 +39,16 @@ export class SoundManager {
   private pluckIn = 0;
   private pluckStep = 0;
   muted = false;
+  volume = 0.6;
 
   constructor() {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) this.muted = (JSON.parse(raw) as { muted?: boolean }).muted === true;
+      if (raw) {
+        const s = JSON.parse(raw) as { muted?: boolean; volume?: number };
+        this.muted = s.muted === true;
+        if (typeof s.volume === 'number') this.volume = Math.max(0, Math.min(1, s.volume));
+      }
     } catch {
       this.muted = false;
     }
@@ -57,7 +62,7 @@ export class SoundManager {
       if (!AC) return;
       this.ctx = new AC();
       this.master = this.ctx.createGain();
-      this.master.gain.value = this.muted ? 0 : 0.6;
+      this.master.gain.value = this.muted ? 0 : this.volume;
       this.master.connect(this.ctx.destination);
       this.sfxBus = this.ctx.createGain();
       this.sfxBus.gain.value = 1;
@@ -75,13 +80,25 @@ export class SoundManager {
 
   setMuted(m: boolean): void {
     this.muted = m;
+    this.persistSettings();
+    if (this.ctx && this.master) {
+      this.master.gain.setTargetAtTime(m ? 0 : this.volume, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  setVolume(v: number): void {
+    this.volume = Math.max(0, Math.min(1, v));
+    this.persistSettings();
+    if (this.ctx && this.master && !this.muted) {
+      this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  private persistSettings(): void {
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ muted: m }));
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify({ muted: this.muted, volume: this.volume }));
     } catch {
       /* storage blocked — sound still works for the session */
-    }
-    if (this.ctx && this.master) {
-      this.master.gain.setTargetAtTime(m ? 0 : 0.6, this.ctx.currentTime, 0.02);
     }
   }
 

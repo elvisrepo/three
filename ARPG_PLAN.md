@@ -418,7 +418,7 @@ Things offered or noticed but deliberately not built yet. Check here before prop
 - **Minimap click-to-move** — map px → world coords → `setTarget`. ~10 lines. Minimap is display-only today.
 - **Second advancement (Lv20)** — done (6 ults on key `3`, auto-unlock; see `Jobs.ts` + `castUlt`).
 - **Zone 4 (Lv 30–40)** — append one object to `ZONES` (Zone 3 Ember Wastes 20–30 + Cinder Tyrant done).
-- **QoL pack** — pause menu, volume slider (mute exists), keybind remapping (keys hardcoded in `bindInput`), stash chest in Haven.
+- **QoL pack** — done (Esc pause menu, volume slider, remappable keys in `Keybinds.ts`, shared stash chest).
 - **Quests** — kill-count + boss-kill tracker with rewards. No quest state exists yet.
 - **Composed music** — generative ambient is a placeholder; `SoundManager.setMood` is the seam for streamed tracks.
 - **Art pass** — replace capsule bodies with Quaternius/Mixamo GLBs (`Player`/`Monster` constructors are the swap points; keep the ring/HP-bar/label children).
