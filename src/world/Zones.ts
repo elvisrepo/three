@@ -19,6 +19,8 @@ export interface ZoneDef {
   groundColor: number;
   fogColor: number;
   wallColor: number;
+  /** Trash-monster body tint for zone identity. */
+  monsterTint: number;
   monsters: MonsterPack | null;
   boss: BossDef | null;
   hasShop: boolean;
@@ -41,6 +43,7 @@ export const ZONES: ZoneDef[] = [
     groundColor: 0x5b6470,
     fogColor: 0x11141c,
     wallColor: 0x3a4150,
+    monsterTint: 0x9b5de5,
     monsters: null,
     boss: null,
     hasShop: true,
@@ -59,6 +62,7 @@ export const ZONES: ZoneDef[] = [
     groundColor: 0x35793e,
     fogColor: 0x0b0e14,
     wallColor: 0x24402a,
+    monsterTint: 0x9b5de5,
     monsters: { count: 8, levelMin: 1, levelMax: 4 },
     boss: { name: 'Dire Wolf Alpha', level: 8 },
     hasShop: false,
@@ -77,6 +81,7 @@ export const ZONES: ZoneDef[] = [
     groundColor: 0x3a3f5e,
     fogColor: 0x0a0a18,
     wallColor: 0x23263d,
+    monsterTint: 0x4fd18b,
     monsters: { count: 10, levelMin: 10, levelMax: 13 },
     boss: { name: 'Crypt Lord', level: 15 },
     hasShop: false,
@@ -85,6 +90,25 @@ export const ZONES: ZoneDef[] = [
     shopPos: [0, 0],
     portalPos: [0, 0],
     bossPos: [-12, -14],
+    sanctumPos: [0, 0],
+  },
+  {
+    id: 'ember',
+    name: 'Ember Wastes',
+    sub: 'Lv 20–30',
+    minLevel: 20,
+    groundColor: 0x5e2f23,
+    fogColor: 0x140a08,
+    wallColor: 0x332016,
+    monsterTint: 0xe25822,
+    monsters: { count: 12, levelMin: 20, levelMax: 24 },
+    boss: { name: 'Cinder Tyrant', level: 25 },
+    hasShop: false,
+    hasPortal: false,
+    spawn: [0, 18],
+    shopPos: [0, 0],
+    portalPos: [0, 0],
+    bossPos: [0, -18],
     sanctumPos: [0, 0],
   },
 ];

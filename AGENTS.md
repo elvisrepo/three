@@ -5,8 +5,8 @@ Three.js isometric ARPG (Diablo/PoE-like), single-player prototype. Read this be
 ## Current state
 
 Playable Phase 2 loop: title → hero select/create (Warrior/Archer/Mage, x1–x10 EXP rate) → Haven
-(shop + portal) → Greenmeadow 1–10 + boss → Crypt 10–20 + boss → attrs, loot rarities, TP scrolls,
-minimap, blink, localStorage saves with export/import. **Lv10 job advancement is in** (`src/data/Jobs.ts`,
+(shop + portal) → Greenmeadow 1–10 + boss → Crypt 10–20 + boss → Ember Wastes 20–30 + boss →
+attrs, loot rarities, TP scrolls, minimap, blink, localStorage saves with export/import. **Lv10 job advancement is in** (`src/data/Jobs.ts`,
 6 jobs each with a key-2 skill). Design doc: `ARPG_PLAN.md`. Deferred work + playtest notes live in
 `ARPG_PLAN.md` §16 (backlog) — check it before proposing next steps. Future (accounts, multiplayer,
 security, monetization) is **documented, not built** — see `ARPG_PLAN.md` §15 and "Product constraints" below.

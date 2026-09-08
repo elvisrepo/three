@@ -786,7 +786,8 @@ export class Game {
 
     this.scene.background = new THREE.Color(def.fogColor);
     (this.scene.fog as THREE.Fog).color.setHex(def.fogColor);
-    this.sound.setMood(def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : 'city');
+    const mood = def.id === 'ember' ? 'ember' : def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : 'city';
+    this.sound.setMood(mood);
     this.groundMat.color.setHex(def.groundColor);
     for (const w of this.wallMats) w.color.setHex(def.wallColor);
 
@@ -836,7 +837,7 @@ export class Game {
         z = THREE.MathUtils.clamp(z + 9, -27, 27);
       }
       const level = randi(def.monsters.levelMin, def.monsters.levelMax);
-      const m = new Monster(new THREE.Vector3(x, 0, z), level);
+      const m = new Monster(new THREE.Vector3(x, 0, z), level, { tint: def.monsterTint });
       m.group.userData.monster = m;
       this.monsters.push(m);
       this.scene.add(m.group);
@@ -845,7 +846,7 @@ export class Game {
 
   private spawnBoss(def: ZoneDef): void {
     if (!def.boss) return;
-    const tint = def.id === 'crypt' ? 0x7b2ff7 : 0xb81f2d;
+    const tint = def.id === 'crypt' ? 0x7b2ff7 : def.id === 'ember' ? 0xff5a1f : 0xb81f2d;
     const boss = new Monster(new THREE.Vector3(def.bossPos[0], 0, def.bossPos[1]), def.boss.level, {
       hpMult: 6,
       dmgMult: 1.4,

@@ -55,6 +55,9 @@ const BASES: ItemBase[] = [
   { id: 'swift_boots', name: 'Swift Boots', slot: 'boots', dmg: 0, armor: 5, icon: '👢', minLvl: 6 },
   { id: 'copper_ring', name: 'Copper Ring', slot: 'ring', dmg: 0, armor: 0, icon: '💍', minLvl: 2 },
   { id: 'silver_ring', name: 'Silver Ring', slot: 'ring', dmg: 0, armor: 0, icon: '💍', minLvl: 8 },
+  { id: 'ember_ring', name: 'Ember Ring', slot: 'ring', dmg: 0, armor: 0, icon: '💍', minLvl: 18 },
+  { id: 'inferno_blade', name: 'Inferno Blade', slot: 'weapon', dmg: 20, armor: 0, icon: '🔥', minLvl: 20 },
+  { id: 'magma_plate', name: 'Magma Plate', slot: 'chest', dmg: 0, armor: 16, icon: '🌋', minLvl: 20 },
 ];
 
 export const RARITY_COLOR: Record<ItemRarity, string> = {
