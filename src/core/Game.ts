@@ -3,6 +3,7 @@ import { Player } from '../entities/Player';
 import { Monster } from '../entities/Monster';
 import { BossController } from '../entities/Boss';
 import { DamageNumbers } from '../entities/DamageNumbers';
+import { SoundManager } from '../audio/Sound';
 import { Effects } from '../entities/Effects';
 import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
@@ -85,6 +86,7 @@ export class Game {
   private effects!: Effects;
   private projectiles!: ProjectilePool;
   private loot!: LootManager;
+  private sound = new SoundManager();
   private inventory = new Inventory();
   private equipment = new Equipment();
   private prevGear: GearBonus = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
@@ -427,6 +429,7 @@ export class Game {
     this.mmCtx = this.minimap?.getContext('2d') ?? null;
     this.elFlash = $('flash');
     this.elFade = $('fade');
+    this.syncMuteIcon();
 
     // Panel interactions (delegated — survive innerHTML re-renders)
     this.elInvGrid?.addEventListener('click', (e) => {
@@ -493,6 +496,7 @@ export class Game {
       if (id) this.travelTo(id);
     });
     document.getElementById('btn-inv')?.addEventListener('click', () => this.toggleInventory());
+    document.getElementById('btn-mute')?.addEventListener('click', () => this.toggleMute());
     document.getElementById('btn-chars')?.addEventListener('click', () => this.openCharSelect());
     document.getElementById('btn-char')?.addEventListener('click', () => this.toggleChar());
     document.getElementById('btn-save')?.addEventListener('click', () => {
@@ -782,6 +786,7 @@ export class Game {
 
     this.scene.background = new THREE.Color(def.fogColor);
     (this.scene.fog as THREE.Fog).color.setHex(def.fogColor);
+    this.sound.setMood(def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : 'city');
     this.groundMat.color.setHex(def.groundColor);
     for (const w of this.wallMats) w.color.setHex(def.wallColor);
 
@@ -894,6 +899,7 @@ export class Game {
     const canvas = this.renderer.domElement;
 
     canvas.addEventListener('pointerdown', (e) => {
+      this.sound.unlock();
       if (e.button === 2) {
         this.player.stop();
         this.player.clearAttackTarget();
@@ -921,7 +927,12 @@ export class Game {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA') return;
       if (e.repeat) return;
+      this.sound.unlock();
       this.keys.add(e.code);
+      if (e.code === 'KeyM') {
+        this.toggleMute();
+        return;
+      }
       if (!this.started) return;
       if (e.code === 'Digit1') this.tryFireball();
       if (e.code === 'Digit2') this.castJobSkill();
@@ -1127,6 +1138,7 @@ export class Game {
     this.player.faceInstant(this.tmpVec.clone().add(this.player.position));
     this.player.swingAnim = 1;
     this.fireTimer = FIREBALL_CD;
+    this.sound.fireball();
     this.effects.burst(
       this.player.position.x + this.tmpVec.x,
       1.3,
@@ -1137,6 +1149,7 @@ export class Game {
 
   private tryPotion(): void {
     if (this.player.drinkPotion()) {
+      this.sound.potion();
       this.numbers.spawn(this.player.position, `+${Math.round(this.player.maxHp * 0.45)}`, { color: '#5dff6b', scale: 1.4 });
     }
   }
@@ -1166,6 +1179,7 @@ export class Game {
     this.numbers.spawn(dest, '✨', { color: '#7dffd4', scale: 1.2 });
     this.effects.burst(dest.x, 1.2, dest.z, { color: 0x7dffd4, count: 12, speed: 4, life: 0.45, size: 1 });
     this.blinkTimer = BLINK_CD;
+    this.sound.blink();
   }
 
   /** Push a teleport destination out of colliders + world bounds. */
@@ -1253,6 +1267,7 @@ export class Game {
     this.closeJobModal();
     this.refreshSkillSlot();
     this.renderChar();
+    this.sound.jobAdvance();
     this.numbers.spawn(this.player.position, `${def.name.toUpperCase()}!`, { color: '#ffd21f', crit: true, scale: 1.8 });
     this.showToast(`${def.icon} Advanced: ${def.name}! Press 2 — ${def.skill.name}.`, 3.5);
     this.autosave();
@@ -1289,6 +1304,7 @@ export class Game {
         const dir = this.aimDir();
         if (!dir) return;
         this.projectiles.fire(this.player.position, dir, dmg * 2.6, 18, 20, 0x7cc4ff);
+        this.sound.fireball();
         this.player.faceInstant(dir.clone().add(this.player.position));
         this.player.swingAnim = 1;
         break;
@@ -1299,6 +1315,7 @@ export class Game {
         for (const a of [-0.18, 0, 0.18]) {
           this.projectiles.fire(this.player.position, dir.clone().applyAxisAngle(UP, a), dmg * 1.3, 16, 18, 0x5dff6b);
         }
+        this.sound.fireball();
         this.player.faceInstant(dir.clone().add(this.player.position));
         this.player.swingAnim = 1;
         break;
@@ -1306,6 +1323,7 @@ export class Game {
       case 'whirlwind': {
         this.whirlTimer = 0.4;
         this.player.swingAnim = 1;
+        this.sound.swing();
         this.showMarker(this.player.position, 0xffd21f);
         this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 4);
         this.hitAllInRadius(this.player.position, 4, dmg * 1.8, 0, 0xffd21f);
@@ -1321,6 +1339,7 @@ export class Game {
         this.player.setTarget(dest);
         this.player.faceInstant(dir.clone().add(dest));
         this.player.swingAnim = 1;
+        this.sound.blink();
         this.showMarker(dest, 0x9b5de5);
         this.effects.ring(dest.x, dest.z, 0x9b5de5, 2.6);
         this.hitAllInRadius(dest, 2.6, dmg * 2.6, 0, 0x9b5de5);
@@ -1331,11 +1350,13 @@ export class Game {
         if (!aim) return;
         this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true });
         this.player.swingAnim = 1;
+        this.sound.fireball();
         break;
       }
       case 'frost_nova': {
         this.queueAoe(this.player.position.x, this.player.position.z, 4.5, dmg * 1.6, 3, 0.2, 0x9adcff);
         this.player.swingAnim = 1;
+        this.sound.blink();
         break;
       }
       default:
@@ -1357,6 +1378,7 @@ export class Game {
       const died = m.takeDamage(roll.amount, roll.isCrit, this.numbers);
       if (slow > 0) m.applySlow(slow, this.numbers);
       this.healLifesteal(roll.amount);
+      this.sound.hit(false);
       this.effects.burst(m.position.x, 1.3, m.position.z, { color, count: 7, speed: 4, life: 0.4, size: 0.9 });
       hitAny = true;
       if (died) {
@@ -1428,10 +1450,12 @@ export class Game {
     const taken = this.mitigate(raw);
     const died = this.player.takeDamage(taken);
     this.numbers.spawn(this.player.position, `${taken}`, { color: '#ff6b6b' });
+    this.sound.hurt();
     this.camShake = Math.min(0.6, this.camShake + 0.25);
     if (died) {
       this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0xff2222, count: 26, speed: 6, life: 0.7, size: 1.2 });
       this.flashScreen('#7a0000', 0.5, 0.5);
+      this.sound.death();
       this.deathTimer = RESPAWN_DELAY;
       if (this.elDeath) this.elDeath.style.display = 'flex';
       this.showToast('You died — a portal drags you back to Haven…');
@@ -1444,6 +1468,9 @@ export class Game {
     this.effects.burst(m.position.x, 1.0, m.position.z, m.isBoss
       ? { color: 0xffd21f, count: 30, speed: 7, life: 0.8, size: 1.3 }
       : { color: 0x9b5de5, count: 9, speed: 4, life: 0.45, size: 0.9 });
+    if (m.isBoss) this.sound.bossDie();
+    else this.sound.monsterDie();
+    this.sound.gold();
     const gold = m.isBoss ? randi(60, 120) : randi(2, 5) + m.level;
     this.inventory.gold += gold;
     this.numbers.spawn(m.position, `+${gold}g`, { color: '#ffd479', scale: 1.1 });
@@ -1468,6 +1495,7 @@ export class Game {
       this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xffd21f, count: 24, speed: 5, life: 0.7, size: 1.1 });
       this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 3.5);
       this.flashScreen('#ffd21f', 0.25, 0.4);
+      this.sound.levelup();
       this.showToast(`Level ${this.player.level}! +3 stat points (C) · Trader restocked · +1 potion`, 3.2);
       this.player.potions = Math.min(5, this.player.potions + 1);
       this.refreshShopStock();
@@ -1487,6 +1515,7 @@ export class Game {
       return;
     }
     this.numbers.spawn(this.player.position, item.name, { color: RARITY_COLOR[item.rarity], scale: 1.15 });
+    this.sound.lootRarity(item.rarity);
     this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: parseInt(RARITY_COLOR[item.rarity].slice(1), 16), count: 8, speed: 3, life: 0.4, size: 0.8 });
     this.showToast(`${item.icon} ${item.name} — press I to equip`);
     this.renderInventory();
@@ -1509,12 +1538,14 @@ export class Game {
 
   private toggleInventory(force?: boolean): void {
     this.invOpen = force ?? !this.invOpen;
+    if (this.invOpen) this.sound.uiClick();
     this.renderInventory();
   }
 
   private openShop(): void {
     this.shopOpen = true;
     this.invOpen = true; // selling needs the bag visible
+    this.sound.uiClick();
     this.renderShop();
     this.renderInventory();
   }
@@ -1526,6 +1557,7 @@ export class Game {
 
   private openPortal(): void {
     this.portalOpen = true;
+    this.sound.uiClick();
     this.renderPortal();
   }
 
@@ -1551,6 +1583,7 @@ export class Game {
 
   private toggleChar(force?: boolean): void {
     this.charOpen = force ?? !this.charOpen;
+    if (this.charOpen) this.sound.uiClick();
     this.renderChar();
   }
 
@@ -1662,11 +1695,13 @@ export class Game {
     this.inventory.remove(uid);
     this.hideCompare();
     this.renderInventory();
+    this.sound.scroll();
     if (this.elFade) this.elFade.style.opacity = '1';
     window.setTimeout(() => {
       this.loadZone('city');
       this.snapCamera();
       if (this.elFade) this.elFade.style.opacity = '0';
+      this.sound.portal();
       this.showToast('🌀 Town portal! Back in Haven.');
     }, 300);
   }
@@ -1778,6 +1813,7 @@ export class Game {
     }
     this.inventory.gold -= it.value;
     this.shopStock.splice(idx, 1);
+    this.sound.buy();
     this.numbers.spawn(this.player.position, it.name, { color: RARITY_COLOR[it.rarity], scale: 1.15 });
     this.renderShop();
     this.renderInventory();
@@ -1789,6 +1825,7 @@ export class Game {
     // Never sell equipped-by-accident: only bag items reach here.
     const price = sellPrice(it);
     this.inventory.gold += price;
+    this.sound.sell();
     this.showToast(`Sold ${it.name} +${price}g`);
     this.renderShop();
     this.renderInventory();
@@ -1806,6 +1843,7 @@ export class Game {
     // Always succeeds: removing the equipped item just freed exactly one bag slot.
     if (prev) this.inventory.add(prev);
     this.refreshGear();
+    this.sound.equip();
     this.showToast(`Equipped ${it.icon} ${it.name}`);
     this.renderInventory();
   }
@@ -1819,6 +1857,7 @@ export class Game {
       return;
     }
     this.refreshGear();
+    this.sound.equip();
     this.renderInventory();
   }
 
@@ -1837,6 +1876,7 @@ export class Game {
       this.loadZone(id);
       this.snapCamera();
       if (this.elFade) this.elFade.style.opacity = '0';
+      this.sound.portal();
     }, 280);
   }
 
@@ -1853,6 +1893,16 @@ export class Game {
     if (kind === 'shop') this.openShop();
     else if (kind === 'portal') this.openPortal();
     else if (kind === 'sanctum') this.trySanctum();
+  }
+
+  private toggleMute(): void {
+    this.sound.setMuted(!this.sound.muted);
+    this.syncMuteIcon();
+  }
+
+  private syncMuteIcon(): void {
+    const btn = document.getElementById('btn-mute');
+    if (btn) btn.textContent = this.sound.muted ? '🔇' : '🔊';
   }
 
   /** Advancement only happens inside the Haven sanctum circle. */
@@ -1960,11 +2010,13 @@ export class Game {
       if (slam > 0 && this.player.alive) {
         this.damagePlayer(slam);
         this.camShake = Math.min(0.9, this.camShake + 0.5);
+        this.sound.bossSlam();
         this.showToast('💥 Boss slam! Move out of the red ring!');
       }
       if (b.consumeSummon()) {
         this.spawnMinion(b.boss.position.x + 2.5, b.boss.position.z + 2.5, b.boss.level - 1);
         this.spawnMinion(b.boss.position.x - 2.5, b.boss.position.z - 2.5, b.boss.level - 1);
+        this.sound.roar();
         this.showToast('The boss calls for aid!', 2);
       }
     }
@@ -1998,6 +2050,7 @@ export class Game {
         const roll = rollPlayerDamage(this.player.attackDamage, this.player.critChance);
         const died = target.takeDamage(roll.amount, roll.isCrit, this.numbers);
         this.healLifesteal(roll.amount);
+        this.sound.hit(roll.isCrit);
         this.effects.burst(target.position.x, 1.4, target.position.z, { color: 0xfff2b0, count: 5, speed: 3, life: 0.3, size: 0.7 });
         if (died) {
           this.onMonsterKilled(target);
@@ -2020,12 +2073,14 @@ export class Game {
       },
       (dealt, m, color) => {
         this.healLifesteal(dealt);
+        this.sound.hit(false);
         this.effects.burst(m.position.x, 1.4, m.position.z, { color, count: 10, speed: 4, life: 0.4, size: 0.9 });
       },
     );
     this.loot.update(dt, this.player.position, (item) => this.onLootPickup(item));
     this.numbers.update(dt);
     this.effects.update(dt);
+    this.sound.update(dt);
     // Sanctum idle sparkles (gold dust drifting up)
     this.sanctumFx -= dt;
     if (this.sanctumFx <= 0) {

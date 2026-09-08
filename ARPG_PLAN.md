@@ -407,3 +407,32 @@ Explicitly recorded so the current architecture doesn't block it later. Single-p
 - Anti-fraud follows from server-authoritative design: duped items and edited saves stop mattering once the server is the source of truth.
 
 **What NOT to do now:** build custom auth, custom crypto, or any payment code. Just don't paint ourselves into a corner (see constraints above).
+
+---
+
+## 16. Backlog — Deferred Items & Playtest Notes (living list)
+
+Things offered or noticed but deliberately not built yet. Check here before proposing "next steps".
+
+### Deferred features (all scoped, none started)
+- **Minimap click-to-move** — map px → world coords → `setTarget`. ~10 lines. Minimap is display-only today.
+- **Second advancement (Lv20)** — ultimate per job on key `3`. Pattern exists (`Jobs.ts` + key-`2` slot); needs 6 ult designs.
+- **Zone 3 (Lv 20–30)** — append one object to `ZONES`; needs monsters/boss tuning + maybe a tileset mood.
+- **QoL pack** — pause menu, volume slider (mute exists), keybind remapping (keys hardcoded in `bindInput`), stash chest in Haven.
+- **Quests** — kill-count + boss-kill tracker with rewards. No quest state exists yet.
+- **Composed music** — generative ambient is a placeholder; `SoundManager.setMood` is the seam for streamed tracks.
+- **Art pass** — replace capsule bodies with Quaternius/Mixamo GLBs (`Player`/`Monster` constructors are the swap points; keep the ring/HP-bar/label children).
+- **Balance telemetry** — log `timeToLevel, deathsPerZone, bossKillTime` (§11) to tune drops/XP with data instead of gut feel.
+
+### Playtest notes (verify in-game, then delete or fix)
+- **Meteor vs chasers** — 0.7s delay may whiff on fast monsters. If so: lead reticle, faster delay (0.5s), or small vacuum on detonate.
+- **Berserker spin lock** — 0.4s rotation override; confirm it feels powerful, not disorienting.
+- **Crypt pad muddiness** — detuned saws through 500Hz lowpass may be muddy on laptop speakers; listen and thin it out if needed.
+- **Low-end perf** — untested on weak hardware. Caps to watch: 18 monsters, 128 FX particles, 2048 shadow map, pixelRatio ≤ 2.
+- **Sanctum discoverability** — one-time toast only. If players hit 10 and wander, add a Haven minimap ping or NPC pointer.
+
+### Tech debt (works, but note the shape)
+- `Game.ts` is ~2300 lines and the sole DOM writer — next split candidate is a `src/ui/` panel layer (inventory/shop/portal/char/compare renderers), keeping sim in `Game.ts`.
+- `applySave` recomputes totals from scratch (class → attrs → levels → gear → job). Any new bonus source must be added to **both** its live path and `applySave` or loads will silently drop it.
+- Cooldown UI is per-slot bespoke (`cd-fire`, `cd-blink`, `cd-skill2` + `cdn-*`); a 3rd active skill should generalize this into a small helper.
+- `healLifesteal` + `hitAllInRadius` duplicate the damage→heal→kill chain in three places (melee, projectiles via callback, AoE). Unify if a 4th damage source appears.
