@@ -25,6 +25,8 @@ export interface ZoneDef {
   monsterTint: number;
   /** Trash-monster visual species. Absent = legacy capsule. */
   monsterSpecies?: MonsterSpecies;
+  /** Boss Mixamo model dir under public/. Absent = capsule. */
+  bossModel?: string;
   monsters: MonsterPack | null;
   boss: BossDef | null;
   hasShop: boolean;
@@ -72,7 +74,8 @@ export const ZONES: ZoneDef[] = [
     monsterTint: 0x9b5de5,
     monsterSpecies: 'goblin',
     monsters: { count: 8, levelMin: 1, levelMax: 4 },
-    boss: { name: 'Dire Wolf Alpha', level: 8 },
+    boss: { name: 'Pumpkin Hulk', level: 8 },
+    bossModel: 'models/boss/meadow',
     hasShop: false,
     hasPortal: false,
     spawn: [0, 18],

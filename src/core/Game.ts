@@ -965,6 +965,7 @@ export class Game {
       isBoss: true,
       aggro: 16,
       respawnDelay: 30,
+      model: def.bossModel,
     });
     boss.attackRange = 3.4;
     boss.group.userData.monster = boss;

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import type { CircleCollider } from './Player';
 import type { DamageNumbers } from './DamageNumbers';
 import { rollMonsterDamage } from '../combat/Stats';
@@ -9,7 +10,13 @@ export type MonsterState = 'idle' | 'chase' | 'return' | 'dead';
 /** Visual species (data-driven per zone) — absent = legacy capsule. */
 export type MonsterSpecies = 'goblin';
 
+/** Boss one-shot channels triggerable from BossController. */
+export type BossSpecial = 'slam' | 'roar';
+
 const _steer = new THREE.Vector3();
+
+/** Seconds from swing trigger to fist impact (single punch at 1.25x). */
+const MELEE_IMPACT_DELAY = 0.3;
 
 function randRange(a: number, b: number): number {
   return a + Math.random() * (b - a);
@@ -44,6 +51,9 @@ export class Monster {
   home = new THREE.Vector3();
   attackTimer = 0;
   attackAnim = 0;
+  /** Delayed melee impact (damage lands when the fist does, not at windup). */
+  private strikeTimer = -1;
+  private strikeDamage = 0;
   wanderTarget = new THREE.Vector3();
   wanderTimer = 0;
   deadTime = 0;
@@ -65,6 +75,21 @@ export class Monster {
   private animT = 0;
   private walkPhase = 0;
   private moving = false;
+  // --- Mixamo boss model (capsule fallback until loaded) ---
+  private modelRoot: THREE.Group | null = null;
+  private mixer: THREE.AnimationMixer | null = null;
+  private mIdle: THREE.AnimationAction | null = null;
+  private mWalk: THREE.AnimationAction | null = null;
+  private mPunch: THREE.AnimationAction | null = null;
+  private mSlam: THREE.AnimationAction | null = null;
+  private mRoar: THREE.AnimationAction | null = null;
+  private mHit: THREE.AnimationAction | null = null;
+  private mDeath: THREE.AnimationAction | null = null;
+  private modelMats: THREE.MeshStandardMaterial[] = [];
+  private pickMeshes: THREE.Object3D[] | null = null;
+  private lastAttackAnim = 0;
+  private lastHitAnimAt = -10;
+  private deathPlayed = false;
 
   constructor(
     spawn: THREE.Vector3,
@@ -80,6 +105,8 @@ export class Monster {
       aggro?: number;
       respawnDelay?: number;
       species?: MonsterSpecies;
+      /** Mixamo model dir under public/ (bosses). Absent = capsule/goblin. */
+      model?: string;
     },
   ) {
     this.level = level;
@@ -111,14 +138,16 @@ export class Monster {
       this.body.castShadow = true;
       this.group.add(this.body);
 
-      // Angry eyes (face +Z)
-      const eyeGeo = new THREE.SphereGeometry(0.11, 8, 8);
-      const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a0b2e });
-      const eL = new THREE.Mesh(eyeGeo, eyeMat);
-      eL.position.set(-0.2, 1.35, 0.48);
-      const eR = new THREE.Mesh(eyeGeo, eyeMat);
-      eR.position.set(0.2, 1.35, 0.48);
-      this.group.add(eL, eR);
+      if (!opts?.model) {
+        // Angry eyes (face +Z) — capsule path only (model hides the capsule)
+        const eyeGeo = new THREE.SphereGeometry(0.11, 8, 8);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x1a0b2e });
+        const eL = new THREE.Mesh(eyeGeo, eyeMat);
+        eL.position.set(-0.2, 1.35, 0.48);
+        const eR = new THREE.Mesh(eyeGeo, eyeMat);
+        eR.position.set(0.2, 1.35, 0.48);
+        this.group.add(eL, eR);
+      }
       this.activeMats = [this.bodyMat];
     }
 
@@ -154,6 +183,10 @@ export class Monster {
     this.home.copy(spawn).setY(0);
     this.group.position.copy(this.home);
     this.wanderTarget.copy(this.home);
+
+    if (opts?.model && !this.goblin) {
+      void this.loadBossModel(opts.model);
+    }
   }
 
   get position(): THREE.Vector3 {
@@ -161,7 +194,116 @@ export class Monster {
   }
 
   get hitMeshes(): THREE.Object3D[] {
+    if (this.pickMeshes) return this.pickMeshes;
     return this.goblin ? this.goblin.pick : [this.body];
+  }
+
+  /** Boss one-shot (slam telegraph windup / summon roar). No-op until loaded. */
+  playSpecial(kind: BossSpecial): void {
+    if (!this.mixer || !this.alive) return;
+    this.fadeModelTo(kind === 'slam' ? this.mSlam : this.mRoar, 0.12);
+  }
+
+  /** Load base.fbx (T-pose mesh), then animation-only clips onto its rig. */
+  private async loadBossModel(base: string): Promise<void> {
+    const url = (f: string): string => `${import.meta.env.BASE_URL}${base}/${f}`;
+    const loader = new FBXLoader();
+    let meshObj: THREE.Group;
+    try {
+      meshObj = await loader.loadAsync(url('base.fbx'));
+    } catch (err) {
+      console.warn(`[Monster] boss model missing (${url('base.fbx')}), keeping capsule`, err);
+      return;
+    }
+    // Mixamo exports in centimeters — scale to meters.
+    meshObj.scale.setScalar(0.01);
+    const pick: THREE.Object3D[] = [];
+    meshObj.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh || (o as THREE.SkinnedMesh).isSkinnedMesh) {
+        const m = o as THREE.Mesh;
+        m.castShadow = true;
+        pick.push(o);
+        const mats = Array.isArray(m.material) ? m.material : [m.material];
+        for (const mat of mats) {
+          if (mat instanceof THREE.MeshStandardMaterial && !this.modelMats.includes(mat)) {
+            this.modelMats.push(mat);
+          }
+        }
+      }
+    });
+    this.modelRoot = meshObj;
+    this.group.add(meshObj);
+    this.body.visible = false;
+    this.pickMeshes = pick;
+    this.activeMats = this.modelMats.length > 0 ? this.modelMats : this.activeMats;
+    this.deathPlayed = false;
+
+    this.mixer = new THREE.AnimationMixer(meshObj);
+    const extra: Array<{
+      file: string;
+      set: (a: THREE.AnimationAction) => void;
+      loop: THREE.AnimationActionLoopStyles;
+      speed: number;
+    }> = [
+      // Idle file is a stand->fight transition: ping-pong it so it sways
+      // instead of snapping each loop. (Swap for plain "Idle" later.)
+      { file: 'idle.fbx', set: (a) => (this.mIdle = a), loop: THREE.LoopPingPong, speed: 1 },
+      { file: 'walk.fbx', set: (a) => (this.mWalk = a), loop: THREE.LoopRepeat, speed: 1 },
+      { file: 'punch.fbx', set: (a) => (this.mPunch = a), loop: THREE.LoopOnce, speed: 1.25 },
+      { file: 'slam.fbx', set: (a) => (this.mSlam = a), loop: THREE.LoopOnce, speed: 1 },
+      { file: 'roar.fbx', set: (a) => (this.mRoar = a), loop: THREE.LoopOnce, speed: 1 },
+      { file: 'hit.fbx', set: (a) => (this.mHit = a), loop: THREE.LoopOnce, speed: 1.6 },
+      { file: 'death.fbx', set: (a) => (this.mDeath = a), loop: THREE.LoopOnce, speed: 1 },
+    ];
+    await Promise.all(
+      extra.map(async (e) => {
+        try {
+          const obj = await loader.loadAsync(url(e.file));
+          const clip = obj.animations[0];
+          if (!clip || !this.mixer) return;
+          const action = this.mixer.clipAction(clip);
+          if (e.loop === THREE.LoopOnce) {
+            action.setLoop(THREE.LoopOnce, 1);
+            action.clampWhenFinished = true;
+          } else {
+            action.setLoop(e.loop, Infinity);
+          }
+          action.timeScale = e.speed;
+          e.set(action);
+          if (e.file === 'idle.fbx') action.play();
+        } catch (err) {
+          console.warn(`[Monster] missing boss anim ${e.file}`, err);
+        }
+      }),
+    );
+  }
+
+  private fadeModelTo(action: THREE.AnimationAction | null, dur = 0.15): void {
+    if (!action || !this.mixer) return;
+    for (const a of [this.mIdle, this.mWalk, this.mPunch, this.mSlam, this.mRoar, this.mHit, this.mDeath]) {
+      if (a && a !== action && a.enabled) a.fadeOut(dur);
+    }
+    action.reset();
+    action.setEffectiveWeight(1);
+    action.fadeIn(dur);
+    action.play();
+  }
+
+  private bossOneShotPlaying(): boolean {
+    return !!(
+      (this.mPunch && this.mPunch.isRunning()) ||
+      (this.mSlam && this.mSlam.isRunning()) ||
+      (this.mRoar && this.mRoar.isRunning()) ||
+      (this.mHit && this.mHit.isRunning())
+    );
+  }
+
+  private playBossLoop(name: 'idle' | 'walk'): void {
+    const action = name === 'walk' ? this.mWalk : this.mIdle;
+    if (!action || !this.mixer) return;
+    if (this.bossOneShotPlaying()) return;
+    if (action.isRunning()) return;
+    this.fadeModelTo(action);
   }
 
   takeDamage(amount: number, isCrit: boolean, numbers: DamageNumbers): boolean {
@@ -171,6 +313,10 @@ export class Monster {
     for (const m of this.activeMats) {
       m.emissive.setHex(0xff2222);
       m.emissiveIntensity = 0.9;
+    }
+    if (this.mixer && this.mHit && this.animT - this.lastHitAnimAt > 0.4) {
+      this.lastHitAnimAt = this.animT;
+      this.fadeModelTo(this.mHit, 0.08);
     }
     numbers.spawn(this.group.position, `${amount}`, {
       color: isCrit ? '#ffd21f' : '#ffffff',
@@ -196,9 +342,13 @@ export class Monster {
   private die(numbers: DamageNumbers): void {
     this.alive = false;
     this.state = 'dead';
-    this.deadTime = 1.1;
+    // Skinned death clip runs longer than the capsule tip-over.
+    this.deadTime = this.modelRoot ? 2.0 : 1.1;
     this.respawnTimer = this.respawnDelay;
     this.hpBg.visible = this.hpFg.visible = false;
+    // Mid-swing strikes fizzle on death.
+    this.strikeTimer = -1;
+    this.strikeDamage = 0;
     numbers.spawn(this.group.position, `+${this.xpValue} XP`, { color: '#7dffd4', scale: 1.4 });
   }
 
@@ -211,6 +361,14 @@ export class Monster {
     this.group.position.set(this.home.x + randRange(-3, 3), 0, this.home.z + randRange(-3, 3));
     this.wanderTarget.copy(this.home);
     this.attackTimer = 0;
+    this.strikeTimer = -1;
+    this.strikeDamage = 0;
+    this.deathPlayed = false;
+    this.lastAttackAnim = 0;
+    if (this.mixer && this.mIdle) {
+      this.mDeath?.stop();
+      this.fadeModelTo(this.mIdle, 0.2);
+    }
     this.updateHpBar();
   }
 
@@ -233,6 +391,7 @@ export class Monster {
     this.slowTimer = Math.max(0, this.slowTimer - dt);
     this.animT += dt;
     this.moving = false;
+    if (this.mixer) this.mixer.update(dt);
     // Flash decay (cheap hit feedback)
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 5);
@@ -249,11 +408,23 @@ export class Monster {
         if (this.attackAnim === 0) this.body.scale.set(1, 1, 1);
       }
     }
+    // Rising edge on attackAnim (set to 1 per melee swing) -> punch once.
+    if (this.attackAnim > 0.5 && this.lastAttackAnim <= 0.5 && this.alive && this.mixer && this.mPunch) {
+      this.fadeModelTo(this.mPunch, 0.08);
+    }
+    this.lastAttackAnim = this.attackAnim;
 
     if (!this.alive) {
-      // Death anim: tip over + sink, then hide until respawn
+      // Death: skinned clip for the model, tip-over + sink for primitives.
+      if (this.modelRoot && this.mDeath) {
+        if (!this.deathPlayed) {
+          this.deathPlayed = true;
+          this.fadeModelTo(this.mDeath, 0.15);
+        }
+      } else {
+        this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, -Math.PI / 2.2, 1 - Math.exp(-8 * dt));
+      }
       this.deadTime -= dt;
-      this.group.rotation.x = THREE.MathUtils.lerp(this.group.rotation.x, -Math.PI / 2.2, 1 - Math.exp(-8 * dt));
       if (this.deadTime <= 0) {
         this.group.visible = false;
         this.respawnTimer -= dt;
@@ -295,14 +466,19 @@ export class Monster {
       this.hp = Math.min(this.maxHp, this.hp + this.maxHp * 0.08 * dt);
       if (Math.random() < dt * 0.5) this.updateHpBar();
     } else if (this.state === 'chase') {
-      if (distPlayer > this.attackRange) {
+      // Plant feet while a skinned one-shot plays (punch/slam/roar/hit):
+      // gliding through an attack pose is what read as "floating".
+      // Capsule/goblin mobs have no one-shots, so this is boss-only in practice.
+      if (distPlayer > this.attackRange && !this.bossOneShotPlaying()) {
         this.moveToward(playerPos, dt, statics, others, 1);
       } else {
         this.face(playerPos, dt);
-        if (this.attackTimer <= 0 && playerAlive) {
+        if (distPlayer <= this.attackRange && this.attackTimer <= 0 && playerAlive) {
           this.attackTimer = this.attackCooldown;
           this.attackAnim = 1;
-          damageToPlayer = rollMonsterDamage(this.damage);
+          // Commit the roll at windup, land it at impact — matches the fist.
+          this.strikeDamage = rollMonsterDamage(this.damage);
+          this.strikeTimer = MELEE_IMPACT_DELAY;
         }
       }
     } else {
@@ -319,6 +495,19 @@ export class Monster {
 
     if (this.goblin) {
       poseGoblin(this.goblin, this.animT, this.moving, this.walkPhase, this.attackAnim);
+    }
+    if (this.mixer) {
+      this.playBossLoop(this.moving ? 'walk' : 'idle');
+    }
+    // Melee impact: damage lands with the fist. Blink/dodge out of reach
+    // before impact and it whiffs (generous slack for capsule-era feel).
+    if (this.strikeTimer > 0) {
+      this.strikeTimer -= dt;
+      if (this.strikeTimer <= 0) {
+        this.strikeTimer = -1;
+        if (distPlayer <= this.attackRange + 1.2) damageToPlayer += this.strikeDamage;
+        this.strikeDamage = 0;
+      }
     }
 
     return damageToPlayer;

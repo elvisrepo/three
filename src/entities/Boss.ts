@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { Monster } from './Monster';
 
 /**
- * Boss extras via composition (Monster stays untouched):
+ * Boss extras via composition (Monster stays decoupled — it only exposes
+ * playSpecial('slam' | 'roar') one-shot channels):
  * - telegraphed AoE slam (red ring warns 0.9s, then hits within radius)
  * - summons 2 minions once at 50% HP (Game polls consumeSummon())
  * - 30s respawn for farmable boss loop
@@ -56,6 +57,7 @@ export class BossController {
     if (!this.summoned && this.boss.hp < this.boss.maxHp * 0.5) {
       this.summoned = true;
       this.summonPending = true;
+      this.boss.playSpecial('roar');
     }
 
     const dist = this.boss.position.distanceTo(playerPos);
@@ -80,6 +82,7 @@ export class BossController {
       this.warnT = 0.9;
       this.telegraph.visible = true;
       this.telegraph.position.set(this.boss.position.x, 0.06, this.boss.position.z);
+      this.boss.playSpecial('slam');
     }
     return 0;
   }
