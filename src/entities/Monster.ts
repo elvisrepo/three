@@ -46,6 +46,8 @@ export class Monster {
   respawnTimer = 0;
   respawnDelay = 9;
   flash = 0;
+  /** Frost slow timer — halves move speed while > 0. */
+  slowTimer = 0;
 
   private body: THREE.Mesh;
   private bodyMat: THREE.MeshStandardMaterial;
@@ -153,6 +155,14 @@ export class Monster {
     return false;
   }
 
+  /** Chill: halves move speed for `seconds`. Re-applying refreshes the duration. */
+  applySlow(seconds: number, numbers?: DamageNumbers): void {
+    if (!this.alive) return;
+    const fresh = this.slowTimer <= 0;
+    this.slowTimer = Math.max(this.slowTimer, seconds);
+    if (fresh && numbers) numbers.spawn(this.group.position, '❄ slowed', { color: '#9adcff', scale: 1.1 });
+  }
+
   private die(numbers: DamageNumbers): void {
     this.alive = false;
     this.state = 'dead';
@@ -190,6 +200,7 @@ export class Monster {
     statics: CircleCollider[],
     others: Monster[],
   ): number {
+    this.slowTimer = Math.max(0, this.slowTimer - dt);
     // Flash decay (cheap hit feedback)
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 5);
@@ -286,7 +297,8 @@ export class Monster {
     const len = _steer.length();
     if (len < 0.05) return;
     _steer.normalize();
-    this.group.position.addScaledVector(_steer, this.speed * mult * dt);
+    const effSpeed = this.speed * mult * (this.slowTimer > 0 ? 0.5 : 1);
+    this.group.position.addScaledVector(_steer, effSpeed * dt);
 
     // Static obstacles push-out
     for (const c of statics) {

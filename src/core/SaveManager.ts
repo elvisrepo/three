@@ -19,6 +19,7 @@ export interface CharacterSave {
   kills: number;
   playtimeSec: number;
   xpRate: number;
+  job: string | null;
   attrs: Attrs;
   statPoints: number;
   inventory: (ItemInstance | null)[];

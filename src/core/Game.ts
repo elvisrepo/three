@@ -3,6 +3,7 @@ import { Player } from '../entities/Player';
 import { Monster } from '../entities/Monster';
 import { BossController } from '../entities/Boss';
 import { DamageNumbers } from '../entities/DamageNumbers';
+import { Effects } from '../entities/Effects';
 import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
@@ -24,6 +25,7 @@ import {
   type GearBonus,
 } from '../items/Items';
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
+import { jobsFor, jobById, ADVANCE_LEVEL } from '../data/Jobs';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, type CharacterSave } from './SaveManager';
 import { StateMachine, GameState } from './StateMachine';
 
@@ -31,6 +33,8 @@ const CAM_FOV = 38;
 const CAM_MIN = 10;
 const CAM_MAX = 40;
 const CAM_DIR = new THREE.Vector3(0, 18, 12).normalize();
+const UP = new THREE.Vector3(0, 1, 0);
+const _aoeVec = new THREE.Vector3();
 
 const FIREBALL_CD = 3;
 const FIREBALL_MULT = 2.1;
@@ -42,6 +46,20 @@ const INTERACT_RADIUS = 3.4;
 
 function randi(a: number, b: number): number {
   return a + Math.floor(Math.random() * (b - a + 1));
+}
+
+/** Delayed ground-targeted blast (meteor, frost nova telegraph). */
+interface PendingAoe {
+  x: number;
+  z: number;
+  radius: number;
+  damage: number;
+  slow: number;
+  timer: number;
+  color: number;
+  flash: string | null;
+  scorch: boolean;
+  mesh: THREE.Mesh;
 }
 
 export class Game {
@@ -61,8 +79,10 @@ export class Game {
   private dummies: THREE.Object3D[] = [];
   private monsters: Monster[] = [];
   private bossCtrls: BossController[] = [];
+  private pendingAoe: PendingAoe[] = [];
 
   private numbers!: DamageNumbers;
+  private effects!: Effects;
   private projectiles!: ProjectilePool;
   private loot!: LootManager;
   private inventory = new Inventory();
@@ -71,6 +91,7 @@ export class Game {
 
   private shopNpc!: THREE.Group;
   private portalMesh!: THREE.Group;
+  private sanctum!: THREE.Group;
   private shopStock: ItemInstance[] = [];
 
   private dirLight!: THREE.DirectionalLight;
@@ -101,8 +122,17 @@ export class Game {
   private autosaveTimer = AUTOSAVE_SEC;
   private fireTimer = 0;
   private blinkTimer = 0;
+  private skillTimer = 0;
+  private skillCdMax = 1;
+  private whirlTimer = 0;
+  private sanctumHintShown = false;
   private deathTimer = 0;
   private camShake = 0;
+  private flashTimer = 0;
+  private flashMax = 0.3;
+  private flashStrength = 0.45;
+  private elFlash: HTMLElement | null = null;
+  private sanctumFx = 0;
   private toastTimer = 0;
   private hoverCheck = 0;
 
@@ -146,6 +176,13 @@ export class Game {
   private elImportStatus: HTMLElement | null = null;
   private elCharPanel: HTMLElement | null = null;
   private elCharBody: HTMLElement | null = null;
+  private elJobModal: HTMLElement | null = null;
+  private elJobCards: HTMLElement | null = null;
+  private elSkill2: HTMLElement | null = null;
+  private elSkill2Cd: HTMLElement | null = null;
+  private elCdnFire: HTMLElement | null = null;
+  private elCdnBlink: HTMLElement | null = null;
+  private elCdnSkill2: HTMLElement | null = null;
   private elCompare: HTMLElement | null = null;
   private elXpRate: HTMLElement | null = null;
   private elFade: HTMLElement | null = null;
@@ -218,6 +255,7 @@ export class Game {
     this.scene.add(this.player.group);
 
     this.numbers = new DamageNumbers(this.scene);
+    this.effects = new Effects(this.scene);
     this.projectiles = new ProjectilePool(this.scene, 16);
     this.loot = new LootManager(this.scene);
   }
@@ -283,6 +321,32 @@ export class Game {
     portal.userData.interact = 'portal';
     this.scene.add(portal);
     this.portalMesh = portal;
+
+    // Job sanctum (Haven): walkable golden circle, advancement happens inside it
+    const sanctum = new THREE.Group();
+    const sring = new THREE.Mesh(
+      new THREE.RingGeometry(2.1, 2.6, 48),
+      new THREE.MeshBasicMaterial({ color: 0xffd21f, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    sring.rotation.x = -Math.PI / 2;
+    sring.position.y = 0.05;
+    const sdisc = new THREE.Mesh(
+      new THREE.CircleGeometry(2.1, 40),
+      new THREE.MeshBasicMaterial({ color: 0xffd21f, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    sdisc.rotation.x = -Math.PI / 2;
+    sdisc.position.y = 0.04;
+    const sbeam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.5, 0.9, 6, 12, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0xffd21f, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    sbeam.position.y = 3;
+    const slabel = this.makeLabel('⭐ SANCTUM');
+    slabel.position.y = 4.4;
+    sanctum.add(sring, sdisc, sbeam, slabel);
+    sanctum.userData.interact = 'sanctum';
+    this.scene.add(sanctum);
+    this.sanctum = sanctum;
   }
 
   private rebuildColliders(): void {
@@ -350,10 +414,18 @@ export class Game {
     this.elImportStatus = $('import-status');
     this.elCharPanel = $('char-panel');
     this.elCharBody = $('char-body');
+    this.elJobModal = $('job-modal');
+    this.elJobCards = $('job-cards');
+    this.elSkill2 = $('skill-job');
+    this.elSkill2Cd = $('cd-skill2');
+    this.elCdnFire = $('cdn-fire');
+    this.elCdnBlink = $('cdn-blink');
+    this.elCdnSkill2 = $('cdn-skill2');
     this.elCompare = $('compare-panel');
     this.elXpRate = $('stat-xprate');
     this.minimap = $('minimap') as HTMLCanvasElement | null;
     this.mmCtx = this.minimap?.getContext('2d') ?? null;
+    this.elFlash = $('flash');
     this.elFade = $('fade');
 
     // Panel interactions (delegated — survive innerHTML re-renders)
@@ -421,6 +493,7 @@ export class Game {
       if (id) this.travelTo(id);
     });
     document.getElementById('btn-inv')?.addEventListener('click', () => this.toggleInventory());
+    document.getElementById('btn-chars')?.addEventListener('click', () => this.openCharSelect());
     document.getElementById('btn-char')?.addEventListener('click', () => this.toggleChar());
     document.getElementById('btn-save')?.addEventListener('click', () => {
       this.autosave();
@@ -428,6 +501,12 @@ export class Game {
     });
     document.getElementById('inv-close')?.addEventListener('click', () => this.toggleInventory(false));
     document.getElementById('char-close')?.addEventListener('click', () => this.toggleChar(false));
+    document.getElementById('job-later')?.addEventListener('click', () => this.closeJobModal());
+    this.elJobCards?.addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest('[data-job]') as HTMLElement | null;
+      const id = t?.dataset.job;
+      if (id) this.chooseJob(id);
+    });
     document.getElementById('shop-close')?.addEventListener('click', () => this.closeShop());
     document.getElementById('portal-close')?.addEventListener('click', () => this.closePortal());
   }
@@ -514,6 +593,7 @@ export class Game {
           kills: Math.max(0, Math.floor(Number(obj.kills) || 0)),
           playtimeSec: Math.max(0, Number(obj.playtimeSec) || 0),
           xpRate: [1, 2, 3, 5, 10].includes(Number(obj.xpRate)) ? Number(obj.xpRate) : 1,
+          job: jobById(typeof obj.job === 'string' ? obj.job : null)?.id ?? null,
           attrs: obj.attrs ?? { ...CLASSES[bc].attrs },
           statPoints: Math.max(0, Math.floor(Number(obj.statPoints) || 0)),
           inventory: Array.isArray(obj.inventory) ? obj.inventory.slice(0, 24) : [],
@@ -530,6 +610,16 @@ export class Game {
         done('Import failed: not a valid hero file.');
       }
     }).catch(() => done('Import failed: could not read file.'));
+  }
+
+  /** Back to hero select mid-game: saves first, freezes the sim behind the overlay. */
+  private openCharSelect(): void {
+    this.autosave();
+    this.closeAllPanels();
+    if (this.elDeath) this.elDeath.style.display = 'none';
+    this.started = false;
+    this.renderCharList();
+    if (this.elCharSelect) this.elCharSelect.style.display = 'flex';
   }
 
   private renderCharList(): void {
@@ -554,6 +644,8 @@ export class Game {
 
   private startNewChar(): void {
     const name = (this.elNewName?.value ?? 'Hero').trim().slice(0, 16) || 'Hero';
+    // Reset the shared Player body (a previous hero may have died mid-pose).
+    this.player.respawn(new THREE.Vector3(0, 0, 0));
     this.player.applyClass(this.pendingClass);
     this.player.charName = name;
     this.player.level = 1;
@@ -576,6 +668,7 @@ export class Game {
     this.inventory.add(makeTpScroll());
     this.player.hp = this.player.maxHp;
     this.currentSaveId = makeCharId();
+    this.sanctumHintShown = false;
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone('city');
@@ -587,6 +680,7 @@ export class Game {
     if (!s) return;
     this.applySave(s);
     this.currentSaveId = s.id;
+    this.sanctumHintShown = false;
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone(s.zoneId, { pos: [s.pos[0], s.pos[1]] });
@@ -611,8 +705,21 @@ export class Game {
     this.equipment.fromJSON(s.equipment);
     this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
     this.refreshGear();
+    const job = jobById(s.job ?? null);
+    if (job && job.baseClass === this.player.baseClass) {
+      this.player.job = job.id;
+      this.player.maxHp += job.bonus.maxHp;
+      this.player.attackDamage += job.bonus.damage;
+      this.player.critChance += job.bonus.crit;
+    }
     this.player.hp = Math.min(s.hp, this.player.maxHp);
     this.player.potions = s.potions;
+    if (!this.player.alive || this.player.hp <= 0) {
+      this.player.alive = true;
+      this.player.group.rotation.x = 0;
+      this.player.hp = this.player.maxHp;
+    }
+    if (this.elDeath) this.elDeath.style.display = 'none';
   }
 
   private collectSave(): CharacterSave | null {
@@ -632,6 +739,7 @@ export class Game {
       kills: this.kills,
       playtimeSec: Math.round(this.playtime),
       xpRate: this.xpRate,
+      job: this.player.job,
       attrs: this.player.attrs(),
       statPoints: this.player.statPoints,
       inventory: this.inventory.toJSON(),
@@ -660,6 +768,12 @@ export class Game {
 
     for (const m of this.monsters) this.scene.remove(m.group);
     for (const b of this.bossCtrls) b.dispose();
+    for (const a of this.pendingAoe) {
+      this.scene.remove(a.mesh);
+      a.mesh.geometry.dispose();
+      (a.mesh.material as THREE.Material).dispose();
+    }
+    this.pendingAoe = [];
     this.monsters = [];
     this.bossCtrls = [];
     this.loot.clear();
@@ -673,8 +787,10 @@ export class Game {
 
     this.shopNpc.position.set(def.shopPos[0], 0, def.shopPos[1]);
     this.portalMesh.position.set(def.portalPos[0], 0, def.portalPos[1]);
+    this.sanctum.position.set(def.sanctumPos[0], 0, def.sanctumPos[1]);
     this.shopNpc.visible = def.hasShop;
     this.portalMesh.visible = def.hasPortal;
+    this.sanctum.visible = def.id === 'city';
     this.rebuildColliders();
 
     if (def.monsters) this.spawnZoneMonsters(def);
@@ -694,7 +810,9 @@ export class Game {
     if (this.started) {
       this.showToast(`Entered ${def.name} — ${def.sub}`);
       this.autosave();
+      this.hintSanctum();
     }
+    this.refreshSkillSlot();
   }
 
   private spawnZoneMonsters(def: ZoneDef): void {
@@ -806,6 +924,7 @@ export class Game {
       this.keys.add(e.code);
       if (!this.started) return;
       if (e.code === 'Digit1') this.tryFireball();
+      if (e.code === 'Digit2') this.castJobSkill();
       if (e.code === 'KeyQ') this.tryPotion();
       if (e.code === 'KeyI') this.toggleInventory();
       if (e.code === 'KeyC') this.toggleChar();
@@ -844,11 +963,11 @@ export class Game {
     return null;
   }
 
-  private findInteractFromHit(obj: THREE.Object3D | null): 'shop' | 'portal' | null {
+  private findInteractFromHit(obj: THREE.Object3D | null): 'shop' | 'portal' | 'sanctum' | null {
     let o: THREE.Object3D | null = obj;
     while (o) {
-      if (o.userData.interact === 'shop' || o.userData.interact === 'portal') {
-        return o.userData.interact as 'shop' | 'portal';
+      if (o.userData.interact === 'shop' || o.userData.interact === 'portal' || o.userData.interact === 'sanctum') {
+        return o.userData.interact as 'shop' | 'portal' | 'sanctum';
       }
       o = o.parent;
     }
@@ -879,10 +998,11 @@ export class Game {
       }
     }
 
-    // 2) Shop / portal NPCs
+    // 2) Shop / portal / sanctum
     const npcMeshes: THREE.Object3D[] = [];
     if (this.shopNpc.visible) npcMeshes.push(this.shopNpc);
     if (this.portalMesh.visible) npcMeshes.push(this.portalMesh);
+    if (this.sanctum.visible) npcMeshes.push(this.sanctum);
     if (npcMeshes.length > 0) {
       const npcHits = this.raycaster.intersectObjects(npcMeshes, true);
       if (npcHits.length > 0) {
@@ -897,6 +1017,12 @@ export class Game {
           this.player.clearAttackTarget();
           this.openPortal();
           this.showMarker(this.portalMesh.position, 0x5da9ff);
+          return;
+        }
+        if (kind === 'sanctum') {
+          this.player.clearAttackTarget();
+          this.trySanctum();
+          this.showMarker(this.sanctum.position, 0xffd21f);
           return;
         }
       }
@@ -955,6 +1081,7 @@ export class Game {
     const npcMeshes: THREE.Object3D[] = [];
     if (this.shopNpc.visible) npcMeshes.push(this.shopNpc);
     if (this.portalMesh.visible) npcMeshes.push(this.portalMesh);
+    if (this.sanctum.visible) npcMeshes.push(this.sanctum);
     const lootMeshes = this.loot.drops.map((d) => d.group);
     const hits = this.raycaster.intersectObjects([...liveGroups, ...npcMeshes, ...lootMeshes, ...this.dummies], true);
     this.renderer.domElement.style.cursor = hits.length > 0 ? 'pointer' : 'crosshair';
@@ -1000,6 +1127,12 @@ export class Game {
     this.player.faceInstant(this.tmpVec.clone().add(this.player.position));
     this.player.swingAnim = 1;
     this.fireTimer = FIREBALL_CD;
+    this.effects.burst(
+      this.player.position.x + this.tmpVec.x,
+      1.3,
+      this.player.position.z + this.tmpVec.z,
+      { color: 0xff9a2e, count: 8, speed: 3, life: 0.35, size: 0.8 },
+    );
   }
 
   private tryPotion(): void {
@@ -1023,8 +1156,21 @@ export class Game {
     this.tmpVec.normalize();
     const dist = aim ? Math.min(aim.distanceTo(this.player.position), BLINK_RANGE) : BLINK_RANGE;
     const dest = this.tmpVec.clone().multiplyScalar(dist).add(this.player.position);
+    this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0x7dffd4, count: 10, speed: 3, life: 0.4, size: 0.9 });
+    this.resolveTeleport(dest);
+    this.player.position.copy(dest);
+    this.player.setTarget(dest);
+    this.player.faceInstant(this.tmpVec.clone().add(dest));
+    this.player.swingAnim = 1;
+    this.showMarker(dest, 0x7dffd4);
+    this.numbers.spawn(dest, '✨', { color: '#7dffd4', scale: 1.2 });
+    this.effects.burst(dest.x, 1.2, dest.z, { color: 0x7dffd4, count: 12, speed: 4, life: 0.45, size: 1 });
+    this.blinkTimer = BLINK_CD;
+  }
+
+  /** Push a teleport destination out of colliders + world bounds. */
+  private resolveTeleport(dest: THREE.Vector3): void {
     dest.y = 0;
-    // Resolve out of walls/NPCs/trees so you never materialize inside one.
     for (const c of this.colliders) {
       const dx = dest.x - c.pos.x;
       const dz = dest.z - c.pos.z;
@@ -1042,13 +1188,228 @@ export class Game {
     }
     dest.x = THREE.MathUtils.clamp(dest.x, -29, 29);
     dest.z = THREE.MathUtils.clamp(dest.z, -29, 29);
-    this.player.position.copy(dest);
-    this.player.setTarget(dest);
-    this.player.faceInstant(this.tmpVec.clone().add(dest));
-    this.player.swingAnim = 1;
-    this.showMarker(dest, 0x7dffd4);
-    this.numbers.spawn(dest, '✨', { color: '#7dffd4', scale: 1.2 });
-    this.blinkTimer = BLINK_CD;
+  }
+
+  /** Direction from player toward cursor (fallback: facing). Null if degenerate. */
+  private aimDir(): THREE.Vector3 | null {
+    this.tmpVec.set(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0);
+    const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+    if (aim) {
+      this.tmpVec.copy(aim).sub(this.player.position).setY(0);
+      if (this.tmpVec.lengthSq() < 0.25) {
+        this.tmpVec.set(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0);
+      }
+    }
+    if (this.tmpVec.lengthSq() < 1e-6) return null;
+    return this.tmpVec.normalize();
+  }
+
+  // ---------- job advancement ----------
+
+  /** One-time hint pointing at the Haven sanctum — advancement itself happens there, never auto-pops. */
+  private hintSanctum(): void {
+    if (!this.started || this.player.job !== null || this.player.level < ADVANCE_LEVEL || this.sanctumHintShown) return;
+    this.sanctumHintShown = true;
+    this.showToast('⭐ Job advancement awaits in the golden Sanctum circle in Haven!', 3.5);
+  }
+
+  private openJobModal(): void {
+    if (!this.elJobModal || !this.elJobCards) return;
+    const jobs = jobsFor(this.player.baseClass);
+    this.elJobCards.innerHTML = jobs.map((j) => {
+      const b = j.bonus;
+      const bonusTxt = `+${b.maxHp} HP · +${b.damage} DMG${b.crit > 0 ? ` · +${Math.round(b.crit * 100)}% crit` : ''}`;
+      return `<div class="job-card" data-job="${j.id}">
+        <div class="job-icon">${j.icon}</div>
+        <b>${j.name}</b>
+        <div class="dim">${j.desc}</div>
+        <div class="job-bonus">${bonusTxt}</div>
+        <div class="job-skill">${j.skill.icon} <b>${j.skill.name}</b> (2)<br><span class="dim">${j.skill.desc} ${j.skill.cooldown}s CD</span></div>
+      </div>`;
+    }).join('');
+    this.elJobModal.style.display = 'flex';
+  }
+
+  private closeJobModal(): void {
+    if (this.elJobModal) this.elJobModal.style.display = 'none';
+  }
+
+  private chooseJob(id: string): void {
+    const def = jobById(id);
+    if (!def || this.player.job !== null) {
+      this.closeJobModal();
+      return;
+    }
+    if (def.baseClass !== this.player.baseClass || this.player.level < ADVANCE_LEVEL) {
+      this.showToast('You are not eligible for that job.');
+      this.closeJobModal();
+      return;
+    }
+    this.player.job = def.id;
+    this.player.maxHp += def.bonus.maxHp;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + def.bonus.maxHp);
+    this.player.attackDamage += def.bonus.damage;
+    this.player.critChance += def.bonus.crit;
+    this.closeJobModal();
+    this.refreshSkillSlot();
+    this.renderChar();
+    this.numbers.spawn(this.player.position, `${def.name.toUpperCase()}!`, { color: '#ffd21f', crit: true, scale: 1.8 });
+    this.showToast(`${def.icon} Advanced: ${def.name}! Press 2 — ${def.skill.name}.`, 3.5);
+    this.autosave();
+  }
+
+  /** Sync skill slot 2 with the current job (locked until advancement). */
+  private refreshSkillSlot(): void {
+    if (!this.elSkill2) return;
+    const job = jobById(this.player.job);
+    if (job) {
+      this.elSkill2.classList.remove('locked');
+      this.elSkill2.innerHTML = `${job.skill.icon}<span class="key">2</span><span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div>`;
+      this.elSkill2.title = `${job.skill.name} (2) — ${job.skill.desc}`;
+    } else {
+      this.elSkill2.classList.add('locked');
+      this.elSkill2.innerHTML = `2<span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div>`;
+      this.elSkill2.title = 'Reach Lv10 and choose a job in the Haven Sanctum';
+    }
+    this.elSkill2Cd = document.getElementById('cd-skill2');
+    this.elCdnSkill2 = document.getElementById('cdn-skill2');
+  }
+
+  private castJobSkill(): void {
+    if (!this.started || !this.player.alive || this.skillTimer > 0) return;
+    const job = jobById(this.player.job);
+    if (!job) {
+      if (this.player.level >= ADVANCE_LEVEL) this.showToast('⭐ Visit the golden Sanctum in Haven to advance!');
+      else this.showToast('Reach Lv10 and choose a job to unlock this slot.');
+      return;
+    }
+    const dmg = this.player.attackDamage;
+    switch (job.skill.id) {
+      case 'shield_throw': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        this.projectiles.fire(this.player.position, dir, dmg * 2.6, 18, 20, 0x7cc4ff);
+        this.player.faceInstant(dir.clone().add(this.player.position));
+        this.player.swingAnim = 1;
+        break;
+      }
+      case 'multishot': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        for (const a of [-0.18, 0, 0.18]) {
+          this.projectiles.fire(this.player.position, dir.clone().applyAxisAngle(UP, a), dmg * 1.3, 16, 18, 0x5dff6b);
+        }
+        this.player.faceInstant(dir.clone().add(this.player.position));
+        this.player.swingAnim = 1;
+        break;
+      }
+      case 'whirlwind': {
+        this.whirlTimer = 0.4;
+        this.player.swingAnim = 1;
+        this.showMarker(this.player.position, 0xffd21f);
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 4);
+        this.hitAllInRadius(this.player.position, 4, dmg * 1.8, 0, 0xffd21f);
+        break;
+      }
+      case 'shadowstrike': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        const dest = dir.clone().multiplyScalar(10).add(this.player.position);
+        this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0x9b5de5, count: 12, speed: 4, life: 0.4, size: 1 });
+        this.resolveTeleport(dest);
+        this.player.position.copy(dest);
+        this.player.setTarget(dest);
+        this.player.faceInstant(dir.clone().add(dest));
+        this.player.swingAnim = 1;
+        this.showMarker(dest, 0x9b5de5);
+        this.effects.ring(dest.x, dest.z, 0x9b5de5, 2.6);
+        this.hitAllInRadius(dest, 2.6, dmg * 2.6, 0, 0x9b5de5);
+        break;
+      }
+      case 'meteor': {
+        const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+        if (!aim) return;
+        this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true });
+        this.player.swingAnim = 1;
+        break;
+      }
+      case 'frost_nova': {
+        this.queueAoe(this.player.position.x, this.player.position.z, 4.5, dmg * 1.6, 3, 0.2, 0x9adcff);
+        this.player.swingAnim = 1;
+        break;
+      }
+      default:
+        return;
+    }
+    this.skillTimer = job.skill.cooldown;
+    this.skillCdMax = job.skill.cooldown;
+  }
+
+  /** Melee-style AoE with lifesteal + shared kill handling. Slow in seconds (0 = none). */
+  private hitAllInRadius(center: THREE.Vector3, radius: number, damage: number, slow: number, color = 0xffffff): void {
+    let hitAny = false;
+    for (const m of this.monsters) {
+      if (!m.alive) continue;
+      const dx = m.position.x - center.x;
+      const dz = m.position.z - center.z;
+      if (dx * dx + dz * dz > radius * radius) continue;
+      const roll = rollPlayerDamage(damage, this.player.critChance);
+      const died = m.takeDamage(roll.amount, roll.isCrit, this.numbers);
+      if (slow > 0) m.applySlow(slow, this.numbers);
+      this.healLifesteal(roll.amount);
+      this.effects.burst(m.position.x, 1.3, m.position.z, { color, count: 7, speed: 4, life: 0.4, size: 0.9 });
+      hitAny = true;
+      if (died) {
+        this.onMonsterKilled(m);
+        if (this.player.attackTarget === m) this.player.clearAttackTarget();
+      }
+    }
+    if (hitAny) {
+      this.camShake = Math.min(0.6, this.camShake + 0.2);
+      this.updateBossBar();
+    }
+  }
+
+  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean }): void {
+    const mesh = new THREE.Mesh(
+      new THREE.RingGeometry(Math.max(0.1, radius - 0.4), radius, 40),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(x, 0.05, z);
+    this.scene.add(mesh);
+    this.pendingAoe.push({ x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, mesh });
+  }
+
+  private updatePendingAoe(dt: number): void {
+    for (let i = this.pendingAoe.length - 1; i >= 0; i--) {
+      const a = this.pendingAoe[i];
+      a.timer -= dt;
+      const mat = a.mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.4 + Math.abs(Math.sin(performance.now() * 0.015)) * 0.4;
+      if (a.timer > 0) continue;
+      this.scene.remove(a.mesh);
+      a.mesh.geometry.dispose();
+      mat.dispose();
+      this.pendingAoe.splice(i, 1);
+      // Detonation: shockwave ring, fireball burst, optional scorch + screen flash
+      this.effects.ring(a.x, a.z, a.color, a.radius, 0.5);
+      this.effects.burst(a.x, 1.0, a.z, { color: a.color, count: 22, speed: 7, life: 0.6, size: 1.2 });
+      if (a.scorch) this.effects.scorch(a.x, a.z, a.radius);
+      if (a.flash) this.flashScreen(a.flash);
+      this.camShake = Math.min(0.9, this.camShake + 0.45);
+      this.hitAllInRadius(_aoeVec.set(a.x, 0, a.z), a.radius, a.damage, a.slow, a.color);
+    }
+  }
+
+  /** Fullscreen color flash (meteor impacts, death, level-up). */
+  private flashScreen(color: string, strength = 0.45, time = 0.3): void {
+    if (!this.elFlash) return;
+    this.elFlash.style.background = color;
+    this.elFlash.style.opacity = String(strength);
+    this.flashTimer = time;
+    this.flashMax = Math.max(0.01, time);
+    this.flashStrength = strength;
   }
 
   private healLifesteal(dealt: number): void {
@@ -1069,6 +1430,8 @@ export class Game {
     this.numbers.spawn(this.player.position, `${taken}`, { color: '#ff6b6b' });
     this.camShake = Math.min(0.6, this.camShake + 0.25);
     if (died) {
+      this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0xff2222, count: 26, speed: 6, life: 0.7, size: 1.2 });
+      this.flashScreen('#7a0000', 0.5, 0.5);
       this.deathTimer = RESPAWN_DELAY;
       if (this.elDeath) this.elDeath.style.display = 'flex';
       this.showToast('You died — a portal drags you back to Haven…');
@@ -1078,6 +1441,9 @@ export class Game {
 
   private onMonsterKilled(m: Monster): void {
     this.kills += 1;
+    this.effects.burst(m.position.x, 1.0, m.position.z, m.isBoss
+      ? { color: 0xffd21f, count: 30, speed: 7, life: 0.8, size: 1.3 }
+      : { color: 0x9b5de5, count: 9, speed: 4, life: 0.45, size: 0.9 });
     const gold = m.isBoss ? randi(60, 120) : randi(2, 5) + m.level;
     this.inventory.gold += gold;
     this.numbers.spawn(m.position, `+${gold}g`, { color: '#ffd479', scale: 1.1 });
@@ -1099,11 +1465,15 @@ export class Game {
     const leveled = this.player.gainXp(m.xpValue * this.xpRate);
     if (leveled) {
       this.numbers.spawn(this.player.position, 'LEVEL UP!', { color: '#ffd21f', crit: true, scale: 1.8 });
+      this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xffd21f, count: 24, speed: 5, life: 0.7, size: 1.1 });
+      this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 3.5);
+      this.flashScreen('#ffd21f', 0.25, 0.4);
       this.showToast(`Level ${this.player.level}! +3 stat points (C) · Trader restocked · +1 potion`, 3.2);
       this.player.potions = Math.min(5, this.player.potions + 1);
       this.refreshShopStock();
       this.renderShop();
       this.renderChar();
+      this.hintSanctum();
     }
     this.updateBossBar();
     this.renderInventory();
@@ -1117,6 +1487,7 @@ export class Game {
       return;
     }
     this.numbers.spawn(this.player.position, item.name, { color: RARITY_COLOR[item.rarity], scale: 1.15 });
+    this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: parseInt(RARITY_COLOR[item.rarity].slice(1), 16), count: 8, speed: 3, life: 0.4, size: 0.8 });
     this.showToast(`${item.icon} ${item.name} — press I to equip`);
     this.renderInventory();
   }
@@ -1168,6 +1539,7 @@ export class Game {
     this.shopOpen = false;
     this.portalOpen = false;
     this.charOpen = false;
+    this.closeJobModal();
     this.hideCompare();
     this.renderInventory();
     this.renderShop();
@@ -1180,6 +1552,15 @@ export class Game {
   private toggleChar(force?: boolean): void {
     this.charOpen = force ?? !this.charOpen;
     this.renderChar();
+  }
+
+  private jobLine(): string {
+    const j = jobById(this.player.job);
+    if (j) return `<div class="dim">${j.icon} ${j.name} · ${j.skill.icon} ${j.skill.name} (2)</div>`;
+    if (this.player.level >= ADVANCE_LEVEL) {
+      return `<div class="dim">⭐ Step into the golden Sanctum in Haven</div>`;
+    }
+    return `<div class="dim">Job advancement at Lv${ADVANCE_LEVEL}</div>`;
   }
 
   private renderChar(): void {
@@ -1195,6 +1576,7 @@ export class Game {
     };
     this.elCharBody.innerHTML =
       `<div class="char-head">${cls.icon} <b>${p.charName}</b> <span class="dim">${cls.name} · Lv${p.level}</span></div>` +
+      this.jobLine() +
       `<div class="dim" id="char-xp">XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate</div>` +
       `<div class="stat-points" id="char-points">⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level</div>` +
       attrRow('str', 'STR', '+1 DMG / 2') +
@@ -1458,10 +1840,11 @@ export class Game {
     }, 280);
   }
 
-  private nearestInteract(): 'shop' | 'portal' | null {
+  private nearestInteract(): 'shop' | 'portal' | 'sanctum' | null {
     if (this.currentZoneId !== 'city' || !this.player.alive) return null;
     if (this.shopNpc.visible && this.player.position.distanceTo(this.shopNpc.position) < INTERACT_RADIUS) return 'shop';
     if (this.portalMesh.visible && this.player.position.distanceTo(this.portalMesh.position) < INTERACT_RADIUS) return 'portal';
+    if (this.sanctum.visible && this.player.position.distanceTo(this.sanctum.position) < 2.9) return 'sanctum';
     return null;
   }
 
@@ -1469,6 +1852,20 @@ export class Game {
     const kind = this.nearestInteract();
     if (kind === 'shop') this.openShop();
     else if (kind === 'portal') this.openPortal();
+    else if (kind === 'sanctum') this.trySanctum();
+  }
+
+  /** Advancement only happens inside the Haven sanctum circle. */
+  private trySanctum(): void {
+    if (this.player.job !== null) {
+      this.showToast('Your path is already chosen.');
+      return;
+    }
+    if (this.player.level < ADVANCE_LEVEL) {
+      this.showToast(`The Sanctum awakens at Lv${ADVANCE_LEVEL} (you: ${this.player.level}).`);
+      return;
+    }
+    this.openJobModal();
   }
 
   private updateBossBar(): void {
@@ -1513,6 +1910,7 @@ export class Game {
     this.playtime += dt;
     this.fireTimer = Math.max(0, this.fireTimer - dt);
     this.blinkTimer = Math.max(0, this.blinkTimer - dt);
+    this.skillTimer = Math.max(0, this.skillTimer - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
 
     this.autosaveTimer -= dt;
@@ -1542,6 +1940,13 @@ export class Game {
     }
 
     this.player.update(dt, this.colliders, kb);
+
+    // Whirlwind spin visual + trailing sparks
+    if (this.whirlTimer > 0) {
+      this.whirlTimer -= dt;
+      this.player.group.rotation.y += dt * 18;
+      this.effects.burst(this.player.position.x, 1.1, this.player.position.z, { color: 0xffd21f, count: 2, speed: 5, life: 0.35, size: 0.9 });
+    }
 
     // Monsters + incoming damage
     for (const m of this.monsters) {
@@ -1593,6 +1998,7 @@ export class Game {
         const roll = rollPlayerDamage(this.player.attackDamage, this.player.critChance);
         const died = target.takeDamage(roll.amount, roll.isCrit, this.numbers);
         this.healLifesteal(roll.amount);
+        this.effects.burst(target.position.x, 1.4, target.position.z, { color: 0xfff2b0, count: 5, speed: 3, life: 0.3, size: 0.7 });
         if (died) {
           this.onMonsterKilled(target);
           this.player.clearAttackTarget();
@@ -1601,7 +2007,8 @@ export class Game {
       }
     }
 
-    // Projectiles + loot + floaters
+    // Projectiles + delayed blasts + loot + floaters
+    this.updatePendingAoe(dt);
     this.projectiles.update(
       dt,
       this.monsters,
@@ -1611,10 +2018,22 @@ export class Game {
         if (this.player.attackTarget === m) this.player.clearAttackTarget();
         this.updateBossBar();
       },
-      (dealt) => this.healLifesteal(dealt),
+      (dealt, m, color) => {
+        this.healLifesteal(dealt);
+        this.effects.burst(m.position.x, 1.4, m.position.z, { color, count: 10, speed: 4, life: 0.4, size: 0.9 });
+      },
     );
     this.loot.update(dt, this.player.position, (item) => this.onLootPickup(item));
     this.numbers.update(dt);
+    this.effects.update(dt);
+    // Sanctum idle sparkles (gold dust drifting up)
+    this.sanctumFx -= dt;
+    if (this.sanctumFx <= 0) {
+      this.sanctumFx = 0.3;
+      if (this.sanctum.visible) {
+        this.effects.burst(this.sanctum.position.x, 0.4, this.sanctum.position.z, { color: 0xffd21f, count: 2, speed: 1.2, life: 0.9, size: 0.7, gravity: -1 });
+      }
+    }
 
     // Walked away from the trader/portal? Close their panels.
     if (this.shopOpen && this.shopNpc.visible &&
@@ -1636,6 +2055,14 @@ export class Game {
     this.dirLight.position.set(this.player.position.x + 10, 20, this.player.position.z + 6);
     this.dirLight.target.position.copy(this.player.position);
     this.dirLight.target.updateMatrixWorld();
+
+    // Screen flash decay (meteor, death, level-up)
+    if (this.flashTimer > 0) {
+      this.flashTimer -= dt;
+      if (this.elFlash) {
+        this.elFlash.style.opacity = String(Math.max(0, this.flashTimer / this.flashMax) * this.flashStrength);
+      }
+    }
 
     // Click marker fade
     if (this.clickMarker.visible) {
@@ -1665,6 +2092,13 @@ export class Game {
       const frac = this.blinkTimer / BLINK_CD;
       this.elBlinkCd.style.height = `${Math.round(frac * 100)}%`;
     }
+    if (this.elSkill2Cd) {
+      const frac = this.skillTimer / this.skillCdMax;
+      this.elSkill2Cd.style.height = `${Math.round(frac * 100)}%`;
+    }
+    if (this.elCdnFire) this.elCdnFire.textContent = this.fireTimer > 0.05 ? `${Math.ceil(this.fireTimer)}` : '';
+    if (this.elCdnBlink) this.elCdnBlink.textContent = this.blinkTimer > 0.05 ? `${Math.ceil(this.blinkTimer)}` : '';
+    if (this.elCdnSkill2) this.elCdnSkill2.textContent = this.skillTimer > 0.05 ? `${Math.ceil(this.skillTimer)}` : '';
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;
@@ -1710,6 +2144,10 @@ export class Game {
         this.elPrompt.style.opacity = '1';
       } else if (near === 'portal') {
         this.elPrompt.textContent = 'F — Travel';
+        this.elPrompt.style.opacity = '1';
+      } else if (near === 'sanctum') {
+        const ready = this.player.job === null && this.player.level >= ADVANCE_LEVEL;
+        this.elPrompt.textContent = ready ? 'F — Advance job ⭐' : 'F — Sanctum (Lv10)';
         this.elPrompt.style.opacity = '1';
       } else {
         this.elPrompt.style.opacity = '0';

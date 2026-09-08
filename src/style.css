@@ -263,6 +263,30 @@ html, body, #app {
   pointer-events: none;
 }
 
+.skill .cd-num {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  font-size: 14px;
+  font-weight: 900;
+  color: #ffd479;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.skill .key {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  font-size: 10px;
+  font-weight: 800;
+  opacity: 0.85;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
+  z-index: 2;
+}
+
 /* ---- side panels (inventory / shop / portal) ---- */
 
 .side-panel {
@@ -590,3 +614,66 @@ html, body, #app {
   transition: opacity 0.25s;
   pointer-events: none;
 }
+
+#flash {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---- job advancement modal ---- */
+
+#job-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 12, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  z-index: 20;
+}
+
+#job-card {
+  width: min(560px, 94vw);
+  background: #0d1322;
+  border: 1px solid rgba(255, 210, 31, 0.55);
+  border-radius: 14px;
+  padding: 22px 24px;
+  text-align: center;
+}
+
+#job-card h1 {
+  margin: 0;
+  color: #ffd21f;
+  letter-spacing: 2px;
+  font-size: 24px;
+}
+
+#job-cards {
+  display: flex;
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.job-card {
+  flex: 1;
+  padding: 12px 10px;
+  background: #141a28;
+  border: 2px solid #333;
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.job-card:hover { border-color: #ffd21f; background: #1d2540; }
+
+.job-icon { font-size: 34px; }
+
+.job-bonus { color: #5dff6b; font-weight: 700; font-size: 12px; }
+
+.job-skill { font-size: 12px; }

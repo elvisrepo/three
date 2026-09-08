@@ -38,6 +38,8 @@ export class Player {
   // --- identity / progression ---
   charName = 'Hero';
   baseClass: StarterClass = 'warrior';
+  /** Advanced job id (null until Lv10 advancement). */
+  job: string | null = null;
   fireMult = 1;
   level = 1;
   xp = 0;
@@ -125,6 +127,7 @@ export class Player {
   applyClass(cls: StarterClass): void {
     const def = CLASSES[cls];
     this.baseClass = cls;
+    this.job = null;
     this.maxHp = def.maxHp;
     this.hp = def.maxHp;
     this.attackDamage = def.damage;

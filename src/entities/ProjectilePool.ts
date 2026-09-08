@@ -9,6 +9,7 @@ interface Bolt {
   traveled: number;
   range: number;
   damage: number;
+  color: number;
   active: boolean;
 }
 
@@ -29,17 +30,25 @@ export class ProjectilePool {
       mesh.visible = false;
       mesh.castShadow = false;
       scene.add(mesh);
-      this.bolts.push({ mesh, mat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, active: false });
+      this.bolts.push({ mesh, mat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, active: false });
     }
   }
 
-  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18): void {
+  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number): void {
     const bolt = this.bolts.find((b) => !b.active);
     if (!bolt) return;
     bolt.active = true;
     bolt.damage = damage;
+    bolt.color = color ?? 0xff6a00;
     bolt.range = range;
     bolt.traveled = 0;
+    if (color !== undefined) {
+      bolt.mat.color.setHex(color);
+      bolt.mat.emissive.setHex(color);
+    } else {
+      bolt.mat.color.setHex(0xff9a2e);
+      bolt.mat.emissive.setHex(0xff6a00);
+    }
     bolt.vel.copy(dir).setY(0).normalize().multiplyScalar(speed);
     bolt.mesh.position.set(from.x, 1.3, from.z);
     bolt.mesh.visible = true;
@@ -56,7 +65,7 @@ export class ProjectilePool {
     monsters: Monster[],
     numbers: DamageNumbers,
     onKill: (m: Monster) => void,
-    onHit?: (dealt: number, m: Monster) => void,
+    onHit?: (dealt: number, m: Monster, color: number) => void,
   ): void {
     for (const bolt of this.bolts) {
       if (!bolt.active) continue;
@@ -77,7 +86,7 @@ export class ProjectilePool {
             const crit = Math.random() < 0.15;
             const dmg = Math.max(1, Math.round(bolt.damage * (0.9 + Math.random() * 0.25) * (crit ? 1.5 : 1)));
             const died = m.takeDamage(dmg, crit, numbers);
-            onHit?.(dmg, m);
+            onHit?.(dmg, m, bolt.color);
             if (died) onKill(m);
             hit = true;
             break;

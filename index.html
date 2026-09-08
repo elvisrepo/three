@@ -15,7 +15,7 @@
         <div id="hud-help" class="panel">
           <strong>ARPG — Phase 2 Loop</strong>
           <div><b>Click</b> monster: attack · ground: move · loot: walk over</div>
-          <div><b>1</b> fireball · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
+          <div><b>1</b> fireball · <b>2</b> job skill (Lv10+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
           <div><b>E</b> blink · <b>F</b> talk/portal · 📜 scroll in bag = teleport home</div>
           <div><b>WASD</b> move · <b>wheel</b> zoom (out to 40) · hover gear to compare</div>
           <div>👑 on minimap = live boss</div>
@@ -25,7 +25,7 @@
           <div>💰 <span id="stat-gold">150g</span> · ⚔️ <span id="stat-kills">0</span></div>
           <div>pos: <span id="stat-pos">0, 0</span> · <span id="stat-state">idle</span> · <span id="stat-fps">--</span> fps</div>
           <div class="dim" id="stat-save">not saved yet</div>
-          <div class="row-btns"><button id="btn-save">💾 Save</button></div>
+          <div class="row-btns"><button id="btn-save">💾 Save</button><button id="btn-chars">🔄 Heroes</button></div>
         </div>
 
         <div id="hud-toast"></div>
@@ -42,8 +42,9 @@
           <div id="xp-bar"><div id="xp-fill"></div></div>
           <div id="hud-skillbar">
             <div class="skill" title="Left-click monster = auto attack">⚔️</div>
-            <div class="skill" title="Fireball (1) — 2x damage">1<div id="cd-fire" class="cd"></div></div>
-            <div class="skill" title="Blink (E) — teleport toward cursor">E<div id="cd-blink" class="cd"></div></div>
+            <div class="skill" title="Fireball (1) — 2x damage">1<span class="cd-num" id="cdn-fire"></span><div id="cd-fire" class="cd"></div></div>
+            <div class="skill locked" id="skill-job" title="Reach Lv10 and choose a job to unlock">2<span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div></div>
+            <div class="skill" title="Blink (E) — teleport toward cursor">E<span class="cd-num" id="cdn-blink"></span><div id="cd-blink" class="cd"></div></div>
             <div class="skill" id="skill-potion" title="Potion (Q) — heal 45%">Q</div>
             <button class="skill btn" id="btn-char" title="Character (C)">👤</button>
             <button class="skill btn" id="btn-inv" title="Inventory (I)">🎒</button>
@@ -113,6 +114,16 @@
           </div>
         </div>
 
+        <div id="job-modal" style="display:none">
+          <div id="job-card">
+            <h1>⭐ JOB ADVANCEMENT</h1>
+            <p class="dim">Level 10! Choose your path — permanent.</p>
+            <div id="job-cards"></div>
+            <button id="job-later">Decide later (C panel)</button>
+          </div>
+        </div>
+
+        <div id="flash"></div>
         <div id="fade"></div>
       </div>
     </div>

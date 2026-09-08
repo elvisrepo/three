@@ -28,6 +28,8 @@ export interface ZoneDef {
   shopPos: [number, number];
   portalPos: [number, number];
   bossPos: [number, number];
+  /** Job-advancement sanctum circle (Haven only, [0,0] = unused). */
+  sanctumPos: [number, number];
 }
 
 export const ZONES: ZoneDef[] = [
@@ -47,6 +49,7 @@ export const ZONES: ZoneDef[] = [
     shopPos: [-7, 0],
     portalPos: [7, 0],
     bossPos: [0, -20],
+    sanctumPos: [0, -8],
   },
   {
     id: 'meadow',
@@ -64,6 +67,7 @@ export const ZONES: ZoneDef[] = [
     shopPos: [0, 0],
     portalPos: [0, 0],
     bossPos: [12, -14],
+    sanctumPos: [0, 0],
   },
   {
     id: 'crypt',
@@ -81,6 +85,7 @@ export const ZONES: ZoneDef[] = [
     shopPos: [0, 0],
     portalPos: [0, 0],
     bossPos: [-12, -14],
+    sanctumPos: [0, 0],
   },
 ];
 
