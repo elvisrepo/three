@@ -29,11 +29,13 @@ import { StateMachine, GameState } from './StateMachine';
 
 const CAM_FOV = 38;
 const CAM_MIN = 10;
-const CAM_MAX = 26;
+const CAM_MAX = 40;
 const CAM_DIR = new THREE.Vector3(0, 18, 12).normalize();
 
 const FIREBALL_CD = 3;
 const FIREBALL_MULT = 2.1;
+const BLINK_CD = 4;
+const BLINK_RANGE = 9;
 const RESPAWN_DELAY = 2.5;
 const AUTOSAVE_SEC = 30;
 const INTERACT_RADIUS = 3.4;
@@ -98,6 +100,7 @@ export class Game {
   private playtime = 0;
   private autosaveTimer = AUTOSAVE_SEC;
   private fireTimer = 0;
+  private blinkTimer = 0;
   private deathTimer = 0;
   private camShake = 0;
   private toastTimer = 0;
@@ -115,6 +118,7 @@ export class Game {
   private elZone: HTMLElement | null = null;
   private elSaveState: HTMLElement | null = null;
   private elFireCd: HTMLElement | null = null;
+  private elBlinkCd: HTMLElement | null = null;
   private elPotion: HTMLElement | null = null;
   private elToast: HTMLElement | null = null;
   private elDeath: HTMLElement | null = null;
@@ -123,6 +127,8 @@ export class Game {
   private elBossName: HTMLElement | null = null;
   private elBossFill: HTMLElement | null = null;
   private elPrompt: HTMLElement | null = null;
+  private minimap: HTMLCanvasElement | null = null;
+  private mmCtx: CanvasRenderingContext2D | null = null;
   private elInvPanel: HTMLElement | null = null;
   private elInvGrid: HTMLElement | null = null;
   private elInvGold: HTMLElement | null = null;
@@ -155,7 +161,7 @@ export class Game {
     container.appendChild(this.renderer.domElement);
 
     this.scene.background = new THREE.Color(0x11141c);
-    this.scene.fog = new THREE.Fog(0x11141c, 32, 85);
+    this.scene.fog = new THREE.Fog(0x11141c, 34, 105);
 
     this.camera = new THREE.PerspectiveCamera(
       CAM_FOV,
@@ -318,6 +324,7 @@ export class Game {
     this.elZone = $('stat-zone');
     this.elSaveState = $('stat-save');
     this.elFireCd = $('cd-fire');
+    this.elBlinkCd = $('cd-blink');
     this.elPotion = $('skill-potion');
     this.elToast = $('hud-toast');
     this.elDeath = $('death-overlay');
@@ -345,6 +352,8 @@ export class Game {
     this.elCharBody = $('char-body');
     this.elCompare = $('compare-panel');
     this.elXpRate = $('stat-xprate');
+    this.minimap = $('minimap') as HTMLCanvasElement | null;
+    this.mmCtx = this.minimap?.getContext('2d') ?? null;
     this.elFade = $('fade');
 
     // Panel interactions (delegated — survive innerHTML re-renders)
@@ -504,7 +513,7 @@ export class Game {
           potions: Math.max(0, Math.min(5, Math.floor(Number(obj.potions) || 0))),
           kills: Math.max(0, Math.floor(Number(obj.kills) || 0)),
           playtimeSec: Math.max(0, Number(obj.playtimeSec) || 0),
-          xpRate: [1, 2, 3].includes(Number(obj.xpRate)) ? Number(obj.xpRate) : 1,
+          xpRate: [1, 2, 3, 5, 10].includes(Number(obj.xpRate)) ? Number(obj.xpRate) : 1,
           attrs: obj.attrs ?? { ...CLASSES[bc].attrs },
           statPoints: Math.max(0, Math.floor(Number(obj.statPoints) || 0)),
           inventory: Array.isArray(obj.inventory) ? obj.inventory.slice(0, 24) : [],
@@ -781,7 +790,7 @@ export class Game {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
-      this.camDist = THREE.MathUtils.clamp(this.camDist + e.deltaY * 0.01, CAM_MIN, CAM_MAX);
+      this.camDist = THREE.MathUtils.clamp(this.camDist + e.deltaY * 0.015, CAM_MIN, CAM_MAX);
     }, { passive: false });
 
     canvas.addEventListener('pointermove', (e) => {
@@ -800,7 +809,8 @@ export class Game {
       if (e.code === 'KeyQ') this.tryPotion();
       if (e.code === 'KeyI') this.toggleInventory();
       if (e.code === 'KeyC') this.toggleChar();
-      if (e.code === 'KeyE') this.interact();
+      if (e.code === 'KeyE') this.tryBlink();
+      if (e.code === 'KeyF') this.interact();
       if (e.code === 'Escape') this.closeAllPanels();
     });
     window.addEventListener('keyup', (e) => {
@@ -998,6 +1008,49 @@ export class Game {
     }
   }
 
+  /** Blink: short-range teleport toward the cursor (or facing). The universal dodge tool. */
+  private tryBlink(): void {
+    if (!this.started || !this.player.alive || this.blinkTimer > 0) return;
+    const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+    this.tmpVec.set(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0);
+    if (aim) {
+      this.tmpVec.copy(aim).sub(this.player.position).setY(0);
+      if (this.tmpVec.lengthSq() < 0.25) {
+        this.tmpVec.set(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0);
+      }
+    }
+    if (this.tmpVec.lengthSq() < 1e-6) return;
+    this.tmpVec.normalize();
+    const dist = aim ? Math.min(aim.distanceTo(this.player.position), BLINK_RANGE) : BLINK_RANGE;
+    const dest = this.tmpVec.clone().multiplyScalar(dist).add(this.player.position);
+    dest.y = 0;
+    // Resolve out of walls/NPCs/trees so you never materialize inside one.
+    for (const c of this.colliders) {
+      const dx = dest.x - c.pos.x;
+      const dz = dest.z - c.pos.z;
+      const min = 0.5 + c.radius;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < min * min) {
+        if (d2 > 1e-6) {
+          const d = Math.sqrt(d2);
+          dest.x = c.pos.x + (dx / d) * min;
+          dest.z = c.pos.z + (dz / d) * min;
+        } else {
+          dest.x = c.pos.x + min;
+        }
+      }
+    }
+    dest.x = THREE.MathUtils.clamp(dest.x, -29, 29);
+    dest.z = THREE.MathUtils.clamp(dest.z, -29, 29);
+    this.player.position.copy(dest);
+    this.player.setTarget(dest);
+    this.player.faceInstant(this.tmpVec.clone().add(dest));
+    this.player.swingAnim = 1;
+    this.showMarker(dest, 0x7dffd4);
+    this.numbers.spawn(dest, '✨', { color: '#7dffd4', scale: 1.2 });
+    this.blinkTimer = BLINK_CD;
+  }
+
   private healLifesteal(dealt: number): void {
     if (this.player.lifesteal > 0 && dealt > 0 && this.player.alive) {
       const heal = Math.max(1, Math.floor((dealt * this.player.lifesteal) / 100));
@@ -1142,15 +1195,36 @@ export class Game {
     };
     this.elCharBody.innerHTML =
       `<div class="char-head">${cls.icon} <b>${p.charName}</b> <span class="dim">${cls.name} · Lv${p.level}</span></div>` +
-      `<div class="dim">XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate</div>` +
-      `<div class="stat-points">⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level</div>` +
+      `<div class="dim" id="char-xp">XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate</div>` +
+      `<div class="stat-points" id="char-points">⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level</div>` +
       attrRow('str', 'STR', '+1 DMG / 2') +
       attrRow('dex', 'DEX', '+0.5% crit each') +
       attrRow('int', 'INT', '+3% fireball each') +
       attrRow('vit', 'VIT', '+6 HP each') +
-      `<div class="derived">DMG ${p.attackDamage} · Armor ${p.armor}<br>` +
+      `<div class="derived" id="char-derived">DMG ${p.attackDamage} · Armor ${p.armor}<br>` +
       `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
       `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}</div>`;
+  }
+
+  /**
+   * Cheap live refresh of the open char panel — text nodes only, never rebuilds
+   * the + buttons. Full innerHTML rebuilds at 10Hz were destroying buttons
+   * mid-click and eating most clicks.
+   */
+  private refreshCharLive(): void {
+    if (!this.charOpen || !this.elCharBody) return;
+    const p = this.player;
+    const xp = this.elCharBody.querySelector('#char-xp');
+    if (xp) xp.textContent = `XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate`;
+    const pts = this.elCharBody.querySelector('#char-points');
+    if (pts) pts.textContent = `⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level`;
+    const der = this.elCharBody.querySelector('#char-derived');
+    if (der) {
+      der.innerHTML =
+        `DMG ${p.attackDamage} · Armor ${p.armor}<br>` +
+        `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
+        `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}`;
+    }
   }
 
   // ---------- item compare ----------
@@ -1438,6 +1512,7 @@ export class Game {
 
     this.playtime += dt;
     this.fireTimer = Math.max(0, this.fireTimer - dt);
+    this.blinkTimer = Math.max(0, this.blinkTimer - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
 
     this.autosaveTimer -= dt;
@@ -1586,6 +1661,10 @@ export class Game {
       const frac = this.fireTimer / FIREBALL_CD;
       this.elFireCd.style.height = `${Math.round(frac * 100)}%`;
     }
+    if (this.elBlinkCd) {
+      const frac = this.blinkTimer / BLINK_CD;
+      this.elBlinkCd.style.height = `${Math.round(frac * 100)}%`;
+    }
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;
@@ -1627,17 +1706,113 @@ export class Game {
     const near = this.nearestInteract();
     if (this.elPrompt) {
       if (near === 'shop') {
-        this.elPrompt.textContent = 'E — Trade';
+        this.elPrompt.textContent = 'F — Trade';
         this.elPrompt.style.opacity = '1';
       } else if (near === 'portal') {
-        this.elPrompt.textContent = 'E — Travel';
+        this.elPrompt.textContent = 'F — Travel';
         this.elPrompt.style.opacity = '1';
       } else {
         this.elPrompt.style.opacity = '0';
       }
     }
-    if (this.charOpen) this.renderChar();
+    if (this.charOpen) this.refreshCharLive();
+    this.drawMinimap();
     this.updateBossBar();
+  }
+
+  /** Full-zone minimap: obstacles, loot, NPCs, monsters — live boss pulses with a crown. */
+  private drawMinimap(): void {
+    const ctx = this.mmCtx;
+    const canvas = this.minimap;
+    if (!ctx || !canvas || !this.started) return;
+    const S = canvas.width;
+    const toMap = (x: number, z: number): [number, number] => [
+      ((x + 30) / 60) * S,
+      ((z + 30) / 60) * S,
+    ];
+
+    ctx.clearRect(0, 0, S, S);
+    ctx.fillStyle = 'rgba(8, 12, 20, 0.85)';
+    ctx.fillRect(0, 0, S, S);
+
+    // Obstacles
+    ctx.fillStyle = 'rgba(130, 140, 150, 0.55)';
+    for (const c of this.statics) {
+      const [mx, mz] = toMap(c.pos.x, c.pos.z);
+      ctx.beginPath();
+      ctx.arc(mx, mz, Math.max(1.5, c.radius * (S / 60)), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Loot crystals
+    ctx.fillStyle = '#ffd21f';
+    for (const d of this.loot.drops) {
+      const [mx, mz] = toMap(d.group.position.x, d.group.position.z);
+      ctx.fillRect(mx - 1.5, mz - 1.5, 3, 3);
+    }
+    // Trader (green square) + portal (cyan diamond)
+    if (this.shopNpc.visible) {
+      const [mx, mz] = toMap(this.shopNpc.position.x, this.shopNpc.position.z);
+      ctx.fillStyle = '#2ecc71';
+      ctx.fillRect(mx - 3, mz - 3, 6, 6);
+    }
+    if (this.portalMesh.visible) {
+      const [mx, mz] = toMap(this.portalMesh.position.x, this.portalMesh.position.z);
+      ctx.fillStyle = '#5da9ff';
+      ctx.beginPath();
+      ctx.moveTo(mx, mz - 4);
+      ctx.lineTo(mx + 4, mz);
+      ctx.lineTo(mx, mz + 4);
+      ctx.lineTo(mx - 4, mz);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // Trash monsters
+    ctx.fillStyle = '#c07bff';
+    for (const m of this.monsters) {
+      if (!m.alive || m.isBoss) continue;
+      const [mx, mz] = toMap(m.position.x, m.position.z);
+      ctx.beginPath();
+      ctx.arc(mx, mz, 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Boss: pulsing red marker + crown (drawn last, on top)
+    const t = performance.now() / 300;
+    for (const m of this.monsters) {
+      if (!m.alive || !m.isBoss) continue;
+      const [mx, mz] = toMap(m.position.x, m.position.z);
+      ctx.fillStyle = 'rgba(255, 60, 60, 0.35)';
+      ctx.beginPath();
+      ctx.arc(mx, mz, 8 + Math.sin(t) * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ff3b3b';
+      ctx.beginPath();
+      ctx.arc(mx, mz, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('👑', mx, mz - 5);
+    }
+    // Player arrow (rotates with facing)
+    const [px, pz] = toMap(this.player.position.x, this.player.position.z);
+    ctx.save();
+    ctx.translate(px, pz);
+    ctx.rotate(Math.PI - this.player.group.rotation.y);
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, -6);
+    ctx.lineTo(4, 5);
+    ctx.lineTo(-4, 5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.strokeStyle = 'rgba(255, 212, 121, 0.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, S - 2, S - 2);
   }
 
   private onResize(): void {

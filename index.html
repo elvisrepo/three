@@ -16,8 +16,9 @@
           <strong>ARPG — Phase 2 Loop</strong>
           <div><b>Click</b> monster: attack · ground: move · loot: walk over</div>
           <div><b>1</b> fireball · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
-          <div><b>E</b> talk/portal · 📜 scroll in bag = teleport home</div>
-          <div><b>WASD</b> move · <b>wheel</b> zoom · hover gear to compare</div>
+          <div><b>E</b> blink · <b>F</b> talk/portal · 📜 scroll in bag = teleport home</div>
+          <div><b>WASD</b> move · <b>wheel</b> zoom (out to 40) · hover gear to compare</div>
+          <div>👑 on minimap = live boss</div>
         </div>
         <div id="hud-stats" class="panel">
           <div>📍 <b id="stat-zone">Haven</b> · Lv <b id="stat-level">1</b> · EXP <span id="stat-xprate">x1</span></div>
@@ -29,6 +30,7 @@
 
         <div id="hud-toast"></div>
         <div id="interact-prompt"></div>
+        <canvas id="minimap" width="176" height="176" title="Minimap — 👑 is the boss"></canvas>
 
         <div id="boss-bar" style="display:none">
           <div id="boss-name">👑 Boss</div>
@@ -41,6 +43,7 @@
           <div id="hud-skillbar">
             <div class="skill" title="Left-click monster = auto attack">⚔️</div>
             <div class="skill" title="Fireball (1) — 2x damage">1<div id="cd-fire" class="cd"></div></div>
+            <div class="skill" title="Blink (E) — teleport toward cursor">E<div id="cd-blink" class="cd"></div></div>
             <div class="skill" id="skill-potion" title="Potion (Q) — heal 45%">Q</div>
             <button class="skill btn" id="btn-char" title="Character (C)">👤</button>
             <button class="skill btn" id="btn-inv" title="Inventory (I)">🎒</button>
@@ -103,6 +106,8 @@
               <div class="rate-card selected" data-rate="1"><b>x1</b><span>classic</span></div>
               <div class="rate-card" data-rate="2"><b>x2</b><span>faster</span></div>
               <div class="rate-card" data-rate="3"><b>x3</b><span>turbo</span></div>
+              <div class="rate-card" data-rate="5"><b>x5</b><span>rush</span></div>
+              <div class="rate-card" data-rate="10"><b>x10</b><span>instant</span></div>
             </div>
             <button id="btn-create">Begin in Haven →</button>
           </div>
