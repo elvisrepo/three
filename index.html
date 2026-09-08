@@ -13,22 +13,36 @@
       <!-- HUD overlay (HTML, not canvas) -->
       <div id="hud">
         <div id="hud-help" class="panel">
-          <strong>ARPG Prototype — Phase 0</strong>
-          <div><b>Left-click</b> ground: move</div>
-          <div><b>WASD / Arrows</b>: move</div>
+          <strong>ARPG Prototype — Phase 1 Combat</strong>
+          <div><b>Left-click</b> monster: attack-move</div>
+          <div><b>Left-click</b> ground: move · <b>Right-click</b>: stop</div>
+          <div><b>1</b>: Fireball · <b>Q</b>: potion · <b>WASD</b>: move</div>
           <div><b>Wheel</b>: zoom</div>
-          <div><b>Right-click</b>: stop (no menu)</div>
         </div>
         <div id="hud-stats" class="panel">
+          <div>Lv <b id="stat-level">1</b> · kills: <span id="stat-kills">0</span></div>
           <div>pos: <span id="stat-pos">0, 0</span></div>
           <div>state: <span id="stat-state">idle</span></div>
           <div>fps: <span id="stat-fps">--</span></div>
         </div>
-        <div id="hud-skillbar">
-          <div class="skill" title="LMB / click = move (stub)">LMB</div>
-          <div class="skill locked" title="Phase 1">1</div>
-          <div class="skill locked" title="Phase 1">2</div>
-          <div class="skill locked" title="Phase 1">Q</div>
+
+        <div id="hud-toast"></div>
+
+        <div id="hud-bottom">
+          <div id="hp-bar"><div id="hp-fill"></div><span id="hp-text">100/100</span></div>
+          <div id="xp-bar"><div id="xp-fill"></div></div>
+          <div id="hud-skillbar">
+            <div class="skill" title="Left-click monster = auto attack">⚔️</div>
+            <div class="skill" title="Fireball (1) — 2x damage">1<div id="cd-fire" class="cd"></div></div>
+            <div class="skill" id="skill-potion" title="Potion (Q) — heal 45%">Q</div>
+          </div>
+        </div>
+
+        <div id="death-overlay" style="display:none">
+          <div>
+            <h1>YOU DIED</h1>
+            <p id="death-sub">Respawn in 2.5s</p>
+          </div>
         </div>
       </div>
     </div>

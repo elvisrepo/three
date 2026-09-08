@@ -4,6 +4,8 @@ import type { CircleCollider } from '../entities/Player';
 export interface TerrainResult {
   ground: THREE.Mesh;
   colliders: CircleCollider[];
+  /** Static obstacles only (trees/rocks) — monsters collide with these, not dummies. */
+  statics: CircleCollider[];
   dummies: THREE.Object3D[];
   bounds: number;
 }
@@ -64,6 +66,7 @@ function makeDummy(): THREE.Group {
 /** Meadow prototype zone: flat ground + obstacles + training dummies. */
 export function createTerrain(scene: THREE.Scene): TerrainResult {
   const colliders: CircleCollider[] = [];
+  const statics: CircleCollider[] = [];
   const dummies: THREE.Object3D[] = [];
 
   const ground = new THREE.Mesh(
@@ -102,13 +105,17 @@ export function createTerrain(scene: THREE.Scene): TerrainResult {
       const t = makeTree();
       t.position.set(x, 0, z);
       scene.add(t);
-      colliders.push({ pos: new THREE.Vector3(x, 0, z), radius: 0.7 });
+      const c = { pos: new THREE.Vector3(x, 0, z), radius: 0.7 };
+      colliders.push(c);
+      statics.push(c);
     } else {
       const r = makeRock(0.9);
       r.position.set(x, 0.6, z);
       r.rotation.set(Math.random(), Math.random() * 3, 0);
       scene.add(r);
-      colliders.push({ pos: new THREE.Vector3(x, 0, z), radius: 1.0 });
+      const c = { pos: new THREE.Vector3(x, 0, z), radius: 1.0 };
+      colliders.push(c);
+      statics.push(c);
     }
   }
 
@@ -143,5 +150,5 @@ export function createTerrain(scene: THREE.Scene): TerrainResult {
     scene.add(w);
   }
 
-  return { ground, colliders, dummies, bounds: BOUNDS };
+  return { ground, colliders, statics, dummies, bounds: BOUNDS };
 }
