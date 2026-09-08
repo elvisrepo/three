@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚔️</text></svg>" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3jsgame — ARPG Prototype</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-container"></div>
+
+      <!-- HUD overlay (HTML, not canvas) -->
+      <div id="hud">
+        <div id="hud-help" class="panel">
+          <strong>ARPG Prototype — Phase 0</strong>
+          <div><b>Left-click</b> ground: move</div>
+          <div><b>WASD / Arrows</b>: move</div>
+          <div><b>Wheel</b>: zoom</div>
+          <div><b>Right-click</b>: stop (no menu)</div>
+        </div>
+        <div id="hud-stats" class="panel">
+          <div>pos: <span id="stat-pos">0, 0</span></div>
+          <div>state: <span id="stat-state">idle</span></div>
+          <div>fps: <span id="stat-fps">--</span></div>
+        </div>
+        <div id="hud-skillbar">
+          <div class="skill" title="LMB / click = move (stub)">LMB</div>
+          <div class="skill locked" title="Phase 1">1</div>
+          <div class="skill locked" title="Phase 1">2</div>
+          <div class="skill locked" title="Phase 1">Q</div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
