@@ -137,6 +137,9 @@ export class Game {
 
   private kills = 0;
   private playtime = 0;
+  /** Telemetry anchors (§11): playtime snapshot at current level start + zone enter. */
+  private levelStartPlaytime = 0;
+  private zoneEnterPlaytime = 0;
   private autosaveTimer = AUTOSAVE_SEC;
   private fireTimer = 0;
   private blinkTimer = 0;
@@ -807,6 +810,8 @@ export class Game {
     this.player.refreshAttributes();
     this.kills = 0;
     this.playtime = 0;
+    this.levelStartPlaytime = 0;
+    this.zoneEnterPlaytime = 0;
     this.xpRate = this.pendingRate;
     this.inventory = new Inventory();
     this.equipment = new Equipment();
@@ -851,6 +856,8 @@ export class Game {
     this.player.lifesteal = 0;
     this.kills = s.kills;
     this.playtime = s.playtimeSec;
+    this.levelStartPlaytime = s.playtimeSec;
+    this.zoneEnterPlaytime = s.playtimeSec;
     this.xpRate = s.xpRate ?? 1;
     this.inventory.fromJSON(s.inventory, s.gold);
     this.equipment.fromJSON(s.equipment);
@@ -913,11 +920,35 @@ export class Game {
     if (this.elSaveState) this.elSaveState.textContent = `saved ${new Date().toLocaleTimeString()}`;
   }
 
+  /** §11 balance telemetry: append one sample to localStorage + console for tuning. */
+  private logTelemetry(kind: 'timeToLevel' | 'death' | 'bossKill', detail: string, seconds?: number): void {
+    const KEY = 'arpg.telemetry.v1';
+    try {
+      const raw = localStorage.getItem(KEY);
+      const data = raw ? (JSON.parse(raw) as Record<string, Record<string, number[] | number>>) : {};
+      const bucket = (data[kind] ?? {}) as Record<string, number[] | number>;
+      if (kind === 'death') {
+        bucket[detail] = (typeof bucket[detail] === 'number' ? (bucket[detail] as number) : 0) + 1;
+      } else {
+        const arr = (Array.isArray(bucket[detail]) ? (bucket[detail] as number[]) : []) as number[];
+        arr.push(Math.round(seconds ?? 0));
+        bucket[detail] = arr.slice(-50);
+      }
+      data[kind] = bucket;
+      localStorage.setItem(KEY, JSON.stringify(data));
+    } catch {
+      /* telemetry never blocks gameplay */
+    }
+    if (seconds !== undefined) console.log(`[telemetry] ${kind} ${detail}: ${Math.round(seconds)}s`);
+    else console.log(`[telemetry] ${kind} ${detail}`);
+  }
+
   // ---------- zones ----------
 
   private loadZone(zoneId: string, opts?: { pos?: [number, number] }): void {
     const def = zoneById(zoneId);
     this.currentZoneId = def.id;
+    this.zoneEnterPlaytime = this.playtime;
     this.states.set(def.id === 'city' ? GameState.City : GameState.Zone);
 
     for (const m of this.monsters) this.scene.remove(m.group);
@@ -1805,6 +1836,7 @@ export class Game {
       this.deathTimer = RESPAWN_DELAY;
       if (this.elDeath) this.elDeath.style.display = 'flex';
       this.showToast('You died — a portal drags you back to Haven…');
+      this.logTelemetry('death', this.currentZoneId);
     }
     return died;
   }
@@ -1830,6 +1862,7 @@ export class Game {
       this.loot.spawnItem(m.position, makeTpScroll());
       this.loot.spawnItem(m.position, makeTpScroll());
       this.showToast(`👑 ${m.displayName || 'Boss'} slain! Guaranteed loot — grab the crystals!`, 3.2);
+      this.logTelemetry('bossKill', this.currentZoneId, this.playtime - this.zoneEnterPlaytime);
     } else {
       if (Math.random() < 0.09) this.loot.spawnItem(m.position, generateDrop(this.player.level));
       if (Math.random() < 0.05) this.loot.spawnItem(m.position, makeTpScroll());
@@ -1837,6 +1870,8 @@ export class Game {
 
     const leveled = this.player.gainXp(m.xpValue * this.xpRate);
     if (leveled) {
+      this.logTelemetry('timeToLevel', `lv${this.player.level}`, this.playtime - this.levelStartPlaytime);
+      this.levelStartPlaytime = this.playtime;
       this.numbers.spawn(this.player.position, 'LEVEL UP!', { color: '#ffd21f', crit: true, scale: 1.8 });
       this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xffd21f, count: 24, speed: 5, life: 0.7, size: 1.1 });
       this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 3.5);
