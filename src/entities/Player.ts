@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { xpNeed, playerLevelUpBonus } from '../combat/Stats';
 import { CLASSES, type StarterClass, type Attrs } from '../data/Classes';
+import { buildAxe } from '../items/ItemModels';
 
 /** Attribute-derived combat bonus (delta-applied like gear — never double-counts). */
 export interface AttrBonus {
@@ -79,6 +80,9 @@ export class Player {
   swingAnim = 0;
   /** While true, locomotion never touches facing (whirlwind owns rotation). */
   spinLock = false;
+  /** Visible weapon prop (axe first). Parented to the hand bone or body fallback. */
+  private weaponAnchor = new THREE.Group();
+  private weaponBaseId: string | null = null;
   /** Dodge dash state (i-frames while dodgeTimer > 0). */
   dodgeTimer = 0;
   dodgeCd = 0;
@@ -134,6 +138,10 @@ export class Player {
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.03;
     this.group.add(ring);
+
+    // Hand prop anchor (body-space fallback until a hand bone is found).
+    this.weaponAnchor.position.set(0.55, 1.1, 0.25);
+    this.group.add(this.weaponAnchor);
 
     this.group.position.set(0, 0, 0);
   }
@@ -287,6 +295,62 @@ export class Player {
     }
     this.body.visible = true;
     this.nose.visible = true;
+    this.mountWeaponAnchor();
+  }
+
+  /** Show the equipped weapon model in hand (axe only for now, others = bare hands). */
+  setWeaponModel(baseId: string | null): void {
+    const want = baseId === 'woodsman_axe' ? baseId : null;
+    if (want === this.weaponBaseId) return;
+    this.weaponBaseId = want;
+    for (let i = this.weaponAnchor.children.length - 1; i >= 0; i--) {
+      const c = this.weaponAnchor.children[i];
+      this.weaponAnchor.remove(c);
+      c.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.geometry.dispose();
+          const mat = mesh.material as THREE.Material | THREE.Material[];
+          if (Array.isArray(mat)) mat.forEach((m) => m.dispose());
+          else mat.dispose();
+        }
+      });
+    }
+    if (want) {
+      const axe = buildAxe();
+      axe.scale.setScalar(0.85);
+      axe.position.y = -0.2;
+      axe.rotation.x = 0.2;
+      this.weaponAnchor.add(axe);
+    }
+    this.mountWeaponAnchor();
+  }
+
+  /** Parent the weapon anchor to the right-hand bone (cm-scale rig) or body fallback. */
+  private mountWeaponAnchor(): void {
+    let hand: THREE.Object3D | null = null;
+    if (this.modelRoot) {
+      this.modelRoot.traverse((o) => {
+        if (!hand && /righthand/i.test(o.name)) hand = o;
+      });
+      if (!hand) {
+        this.modelRoot.traverse((o) => {
+          if (!hand && /hand/i.test(o.name)) hand = o;
+        });
+      }
+    }
+    if (hand) {
+      // Rig is centimeter-scale (root ×0.01) — counter-scale back to meters.
+      (hand as THREE.Object3D).add(this.weaponAnchor);
+      this.weaponAnchor.position.set(0, 0, 0);
+      this.weaponAnchor.rotation.set(0, 0, 0);
+      this.weaponAnchor.scale.setScalar(100);
+    } else {
+      this.group.add(this.weaponAnchor);
+      this.weaponAnchor.position.set(0.55, 1.1, 0.25);
+      this.weaponAnchor.rotation.set(0, 0, 0);
+      this.weaponAnchor.scale.setScalar(1);
+    }
   }
 
   /** Load idle.fbx (mesh + idle clip), then animation-only clips onto the same rig. */
@@ -325,6 +389,7 @@ export class Player {
     this.nose.visible = false;
     this.modelKey = base;
     this.deathPlayed = false;
+    this.mountWeaponAnchor();
 
     this.mixer = new THREE.AnimationMixer(baseObj);
     const idleClip = baseObj.animations[0] ?? null;

@@ -18,6 +18,7 @@ import {
   gearBonus,
   sellPrice,
   makeTpScroll,
+  buildItemById,
   RARITY_COLOR,
   type ItemInstance,
   type ItemSlot,
@@ -901,6 +902,7 @@ export class Game {
     this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
     for (const it of starterKit()) this.equipment.equip(it);
     this.refreshGear();
+    this.player.setWeaponModel(null);
     this.inventory.add(makeTpScroll());
     this.inventory.add(makeTpScroll());
     this.player.hp = this.player.maxHp;
@@ -946,6 +948,7 @@ export class Game {
     this.equipment.fromJSON(s.equipment);
     this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
     this.refreshGear();
+    this.player.setWeaponModel(this.equipment.slots.weapon?.baseId ?? null);
     const job = jobById(s.job ?? null);
     if (job && job.baseClass === this.player.baseClass) {
       this.player.job = job.id;
@@ -1089,6 +1092,7 @@ export class Game {
       this.hintSanctum();
       this.hintUlt();
     }
+    if (def.id === 'city') this.maybeSpawnCityAxe();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
   }
@@ -1146,6 +1150,40 @@ export class Game {
     m.group.userData.monster = m;
     this.monsters.push(m);
     this.scene.add(m.group);
+  }
+
+  private static readonly AXE_GIFT_KEY = 'arpg.gifts.v1';
+
+  private axeGiftClaimed(): boolean {
+    if (!this.currentSaveId) return true;
+    try {
+      const raw = localStorage.getItem(Game.AXE_GIFT_KEY);
+      const claimed = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+      return claimed[this.currentSaveId] === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private markAxeGiftClaimed(): void {
+    if (!this.currentSaveId) return;
+    try {
+      const raw = localStorage.getItem(Game.AXE_GIFT_KEY);
+      const claimed = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+      claimed[this.currentSaveId] = true;
+      localStorage.setItem(Game.AXE_GIFT_KEY, JSON.stringify(claimed));
+    } catch {
+      /* gift flag never blocks gameplay */
+    }
+  }
+
+  /** One-time Woodsman Axe gift per hero, lying next to the Trader. */
+  private maybeSpawnCityAxe(): void {
+    if (!this.currentSaveId || this.axeGiftClaimed()) return;
+    const axe = buildItemById('woodsman_axe', Math.max(1, this.player.level), 'normal');
+    this.tmpVec.set(-5.5, 0, 2);
+    this.loot.spawnItem(this.tmpVec, axe);
+    if (this.started) this.showToast('🪓 A woodsman axe lies near the Trader — click it!');
   }
 
   private refreshShopStock(): void {
@@ -1985,6 +2023,7 @@ export class Game {
 
   /** Loot grabbed by clicking its crystal — bag space is checked before removal. */
   private onLootPickup(item: ItemInstance): void {
+    if (item.baseId === 'woodsman_axe' && this.currentZoneId === 'city') this.markAxeGiftClaimed();
     this.numbers.spawn(this.player.position, item.name, { color: RARITY_COLOR[item.rarity], scale: 1.15 });
     this.sound.lootRarity(item.rarity);
     this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: parseInt(RARITY_COLOR[item.rarity].slice(1), 16), count: 8, speed: 3, life: 0.4, size: 0.8 });
@@ -2334,6 +2373,7 @@ export class Game {
     // Always succeeds: removing the equipped item just freed exactly one bag slot.
     if (prev) this.inventory.add(prev);
     this.refreshGear();
+    this.player.setWeaponModel(this.equipment.slots.weapon?.baseId ?? null);
     this.sound.equip();
     this.showToast(`Equipped ${it.icon} ${it.name}`);
     this.renderInventory();
@@ -2348,6 +2388,7 @@ export class Game {
       return;
     }
     this.refreshGear();
+    this.player.setWeaponModel(this.equipment.slots.weapon?.baseId ?? null);
     this.sound.equip();
     this.renderInventory();
   }

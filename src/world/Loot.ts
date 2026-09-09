@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RARITY_COLOR, type ItemInstance } from '../items/Items';
+import { buildAxe } from '../items/ItemModels';
 
 interface Drop {
   group: THREE.Group;
@@ -34,12 +35,21 @@ export class LootManager {
     const color = new THREE.Color(RARITY_COLOR[item.rarity]);
     const group = new THREE.Group();
 
-    const gem = new THREE.Mesh(
-      new THREE.OctahedronGeometry(item.rarity === 'legendary' ? 0.5 : 0.35),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8, roughness: 0.3 }),
-    );
-    gem.position.y = 0.75;
-    gem.castShadow = true;
+    let gem: THREE.Object3D;
+    if (item.baseId === 'woodsman_axe') {
+      const axe = buildAxe();
+      axe.position.y = 0.75;
+      axe.rotation.z = 0.12;
+      gem = axe;
+    } else {
+      const crystal = new THREE.Mesh(
+        new THREE.OctahedronGeometry(item.rarity === 'legendary' ? 0.5 : 0.35),
+        new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.8, roughness: 0.3 }),
+      );
+      crystal.position.y = 0.75;
+      crystal.castShadow = true;
+      gem = crystal;
+    }
 
     const beamH = item.rarity === 'legendary' ? 3.4 : item.rarity === 'rare' ? 2.4 : 1.6;
     const beam = new THREE.Mesh(

@@ -38,6 +38,7 @@ interface ItemBase {
 
 const BASES: ItemBase[] = [
   { id: 'rusty_sword', name: 'Rusty Sword', slot: 'weapon', dmg: 4, armor: 0, icon: '🗡️', minLvl: 1 },
+  { id: 'woodsman_axe', name: 'Woodsman Axe', slot: 'weapon', dmg: 6, armor: 0, icon: '🪓', minLvl: 1 },
   { id: 'club', name: 'Oak Club', slot: 'weapon', dmg: 5, armor: 0, icon: '🏏', minLvl: 1 },
   { id: 'short_bow', name: 'Short Bow', slot: 'weapon', dmg: 5, armor: 0, icon: '🏹', minLvl: 2 },
   { id: 'apprentice_staff', name: 'Apprentice Staff', slot: 'weapon', dmg: 6, armor: 0, icon: '🪄', minLvl: 3 },
@@ -146,6 +147,12 @@ export function generateDrop(playerLevel: number, luck = 0, force?: ItemRarity):
   const pool = BASES.filter((b) => b.minLvl <= playerLevel + 2);
   const base = pool.length > 0 ? pool[randi(0, pool.length - 1)] : BASES[0];
   return buildItem(base, playerLevel, force ?? rollRarity(luck));
+}
+
+/** Build a specific base by id (quest gifts, city displays). Falls back to first base. */
+export function buildItemById(baseId: string, playerLevel: number, rarity: ItemRarity): ItemInstance {
+  const base = BASES.find((b) => b.id === baseId) ?? BASES[0];
+  return buildItem(base, playerLevel, rarity);
 }
 
 function buildItem(base: ItemBase, playerLevel: number, rarity: ItemRarity): ItemInstance {
