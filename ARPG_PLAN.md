@@ -432,7 +432,7 @@ Things offered or noticed but deliberately not built yet. Check here before prop
 - **Sanctum discoverability** — one-time toast only. If players hit 10 and wander, add a Haven minimap ping or NPC pointer.
 
 ### Tech debt (works, but note the shape)
-- `Game.ts` is ~2300 lines and the sole DOM writer — next split candidate is a `src/ui/` panel layer (inventory/shop/portal/char/compare renderers), keeping sim in `Game.ts`.
+- `Game.ts` split done (9 pure `src/ui/` builders; `Game.ts` keeps thin DOM wrappers + sim). Remainder intentionally in `Game.ts`: `updateBossBar`, toast/flash/marker helpers, `drawMinimap`.
 - `applySave` recomputes totals from scratch (class → attrs → levels → gear → job). Any new bonus source must be added to **both** its live path and `applySave` or loads will silently drop it.
 - Cooldown UI is per-slot bespoke (`cd-fire`, `cd-blink`, `cd-skill2` + `cdn-*`); a 3rd active skill should generalize this into a small helper.
 - `healLifesteal` + `hitAllInRadius` duplicate the damage→heal→kill chain in three places (melee, projectiles via callback, AoE). Unify if a 4th damage source appears.

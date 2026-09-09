@@ -17,9 +17,7 @@ import {
   starterKit,
   gearBonus,
   sellPrice,
-  affixLabel,
   makeTpScroll,
-  itemStats,
   RARITY_COLOR,
   type ItemInstance,
   type ItemSlot,
@@ -28,8 +26,17 @@ import {
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
 import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL } from '../data/Jobs';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
-import { getBinds, setBind, codeLabel, BIND_LABELS, BIND_ORDER, type BindAction } from './Keybinds';
+import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
+import { compareHtml } from '../ui/compare';
+import { gearStatsText, equipRowHtml, invGridHtml } from '../ui/inventory';
+import { shopStockHtml } from '../ui/shop';
+import { portalListHtml } from '../ui/portal';
+import { jobLineHtml, charBodyHtml, derivedHtml, charXpText, charPointsText, type CharSnapshot } from '../ui/character';
+import { stashGridHtml } from '../ui/stash';
+import { controlsListHtml } from '../ui/controls';
+import { charListHtml } from '../ui/charlist';
+import { cdHeight, cdNum, stateText, barPct, potionHtml, tpScrollCount, promptFor } from '../ui/hud';
 
 const CAM_FOV = 38;
 const CAM_MIN = 10;
@@ -800,22 +807,7 @@ export class Game {
 
   private renderCharList(): void {
     if (!this.elCharList) return;
-    const chars = listChars();
-    if (chars.length === 0) {
-      this.elCharList.innerHTML = '<div class="char-empty">No heroes yet — create one below.</div>';
-      return;
-    }
-    this.elCharList.innerHTML = chars.map((c) => {
-      const zone = zoneById(c.zoneId).name;
-      const when = new Date(c.updatedAt).toLocaleDateString();
-      return `<div class="char-row">
-        <div><b>${c.name}</b> <span class="dim">${c.baseClass} · Lv${c.level} · ${zone} · x${c.xpRate ?? 1} EXP</span></div>
-        <div class="dim">played ${Math.round(c.playtimeSec / 60)}m · ${when}</div>
-        <div class="row-btns"><button data-act="load" data-id="${c.id}">Load</button>
-        <button data-act="exp" data-id="${c.id}">Export</button>
-        <button data-act="del" data-id="${c.id}" class="danger">Delete</button></div>
-      </div>`;
-    }).join('');
+    this.elCharList.innerHTML = charListHtml(listChars(), (id) => zoneById(id).name);
   }
 
   private startNewChar(): void {
@@ -1928,19 +1920,6 @@ export class Game {
 
   // ---------- shop / inventory / portal ----------
 
-  private itemTooltip(it: ItemInstance): string {
-    if (it.kind === 'consumable') {
-      return `${it.icon} ${it.name}\nClick: teleport to Haven (consumed on use)\nSell: ${sellPrice(it)}g`;
-    }    const lines = [
-      `${it.icon} ${it.name} (Lv${it.levelReq})`,
-      it.dmg > 0 ? `Damage: ${it.dmg}` : '',
-      it.armor > 0 ? `Armor: ${it.armor}` : '',
-      ...it.affixes.map((a) => affixLabel(a)),
-      `Sell: ${sellPrice(it)}g`,
-    ].filter((l) => l.length > 0);
-    return lines.join('\n');
-  }
-
   private toggleInventory(force?: boolean): void {
     this.invOpen = force ?? !this.invOpen;
     if (this.invOpen) this.sound.uiClick();
@@ -2007,12 +1986,7 @@ export class Game {
 
   private renderControls(): void {
     if (!this.elControlsList) return;
-    const binds = getBinds();
-    this.elControlsList.innerHTML = BIND_ORDER.map((a) => {
-      const listening = this.rebindAction === a;
-      return `<div class="ctl-row"><span>${BIND_LABELS[a]}</span>` +
-        `<button data-rebind="${a}">${listening ? 'press key…' : codeLabel(binds[a])}</button></div>`;
-    }).join('');
+    this.elControlsList.innerHTML = controlsListHtml(getBinds(), this.rebindAction);
   }
 
   private openStash(): void {
@@ -2033,10 +2007,7 @@ export class Game {
   private renderStash(): void {
     if (this.elStashPanel) this.elStashPanel.style.display = this.stashOpen ? 'block' : 'none';
     if (!this.stashOpen || !this.elStashGrid) return;
-    this.elStashGrid.innerHTML = this.stash.slots.map((it) => {
-      if (!it) return '<div class="inv-cell empty"></div>';
-      return `<div class="inv-cell r-${it.rarity}" data-stash="${it.uid}" title="${this.itemTooltip(it)}">${it.icon}</div>`;
-    }).join('');
+    this.elStashGrid.innerHTML = stashGridHtml(this.stash.slots);
   }
 
   private moveToStash(uid: string): void {
@@ -2079,42 +2050,39 @@ export class Game {
   }
 
   private jobLine(): string {
-    const j = jobById(this.player.job);
-    if (j) {
-      const ult = this.player.level >= ULT_LEVEL
-        ? ` · ${j.ultimate.icon} ${j.ultimate.name} (3)`
-        : ` · ??? (3 at Lv${ULT_LEVEL})`;
-      return `<div class="dim">${j.icon} ${j.name} · ${j.skill.icon} ${j.skill.name} (2)${ult}</div>`;
-    }
-    if (this.player.level >= ADVANCE_LEVEL) {
-      return `<div class="dim">⭐ Step into the golden Sanctum in Haven</div>`;
-    }
-    return `<div class="dim">Job advancement at Lv${ADVANCE_LEVEL}</div>`;
+    return jobLineHtml(jobById(this.player.job), this.player.level);
+  }
+
+  private charSnapshot(): CharSnapshot {
+    const p = this.player;
+    return {
+      charName: p.charName,
+      classIcon: CLASSES[p.baseClass].icon,
+      className: CLASSES[p.baseClass].name,
+      level: p.level,
+      xp: p.xp,
+      xpNext: p.xpNext,
+      xpRate: this.xpRate,
+      statPoints: p.statPoints,
+      attrs: p.attrs(),
+      attackDamage: p.attackDamage,
+      buffActive: p.buffTimer > 0,
+      armor: p.armor,
+      hp: p.hp,
+      maxHp: p.maxHp,
+      mana: p.mana,
+      maxMana: p.maxMana,
+      critChance: p.critChance,
+      lifesteal: p.lifesteal,
+      fireMult: p.fireMult,
+    };
   }
 
   private renderChar(): void {
     if (this.elCharPanel) this.elCharPanel.style.display = this.charOpen ? 'block' : 'none';
     if (!this.charOpen || !this.elCharBody) return;
-    const p = this.player;
-    const cls = CLASSES[p.baseClass];
-    const attrRow = (key: keyof Attrs, label: string, effect: string): string => {
-      const v = p.attrs()[key];
-      return `<div class="attr-row"><span><b>${label}</b> ${v}</span>` +
-        `<span class="dim">${effect}</span>` +
-        `<button data-alloc="${key}" ${p.statPoints > 0 ? '' : 'disabled'}>+</button></div>`;
-    };
-    this.elCharBody.innerHTML =
-      `<div class="char-head">${cls.icon} <b>${p.charName}</b> <span class="dim">${cls.name} · Lv${p.level}</span></div>` +
-      this.jobLine() +
-      `<div class="dim" id="char-xp">XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate</div>` +
-      `<div class="stat-points" id="char-points">⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level</div>` +
-      attrRow('str', 'STR', '+1 DMG / 2') +
-      attrRow('dex', 'DEX', '+0.5% crit each') +
-      attrRow('int', 'INT', '+3% fireball each') +
-      attrRow('vit', 'VIT', '+6 HP each') +
-      `<div class="derived" id="char-derived">DMG ${p.attackDamage}${p.buffTimer > 0 ? ' 😡x2' : ''} · Armor ${p.armor}<br>` +
-      `HP ${p.hp}/${p.maxHp} · MP ${Math.floor(p.mana)}/${p.maxMana} · Crit ${Math.round(p.critChance * 100)}%<br>` +
-      `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}</div>`;
+    const s = this.charSnapshot();
+    this.elCharBody.innerHTML = charBodyHtml(s, this.jobLine());
   }
 
   /**
@@ -2126,15 +2094,12 @@ export class Game {
     if (!this.charOpen || !this.elCharBody) return;
     const p = this.player;
     const xp = this.elCharBody.querySelector('#char-xp');
-    if (xp) xp.textContent = `XP ${Math.floor(p.xp)}/${p.xpNext} · x${this.xpRate} EXP rate`;
+    if (xp) xp.textContent = charXpText(p.xp, p.xpNext, this.xpRate);
     const pts = this.elCharBody.querySelector('#char-points');
-    if (pts) pts.textContent = `⭐ ${p.statPoints} stat point${p.statPoints === 1 ? '' : 's'} — +3 per level`;
+    if (pts) pts.textContent = charPointsText(p.statPoints);
     const der = this.elCharBody.querySelector('#char-derived');
     if (der) {
-      der.innerHTML =
-        `DMG ${p.attackDamage}${p.buffTimer > 0 ? ' 😡x2' : ''} · Armor ${p.armor}<br>` +
-        `HP ${p.hp}/${p.maxHp} · MP ${Math.floor(p.mana)}/${p.maxMana} · Crit ${Math.round(p.critChance * 100)}%<br>` +
-        `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}`;
+      der.innerHTML = derivedHtml(this.charSnapshot());
     }
   }
 
@@ -2142,33 +2107,8 @@ export class Game {
 
   private showCompare(item: ItemInstance): void {
     if (!this.elCompare) return;
-    if (item.kind === 'consumable') {
-      this.elCompare.innerHTML =
-        `<b>${item.icon} ${item.name}</b>` +
-        `<div class="dim">Click in bag: teleport to Haven.<br>Consumed on use · sells for ${sellPrice(item)}g.</div>`;
-      this.elCompare.style.display = 'block';
-      return;
-    }
-    const eq = this.equipment.slots[item.slot];
-    const a = itemStats(item);
-    const b = eq ? itemStats(eq) : { dmg: 0, armor: 0, hp: 0, crit: 0, lifesteal: 0 };
-    const row = (label: string, av: number, bv: number, suffix = ''): string => {
-      const d = av - bv;
-      const cls = d > 0 ? 'better' : d < 0 ? 'worse' : '';
-      const diff = d !== 0 ? ` <span class="${cls}">(${d > 0 ? '+' : ''}${d}${suffix})</span>` : '';
-      return `<div class="cmp-row"><span>${label}</span><b class="${cls}">${av}${suffix}</b><span class="dim">eq ${bv}${suffix}</span>${diff}</div>`;
-    };
-    const reqWarn = this.player.level < item.levelReq
-      ? `<div class="worse">Requires Lv${item.levelReq}</div>` : '';
-    this.elCompare.innerHTML =
-      `<b style="color:${RARITY_COLOR[item.rarity]}">${item.icon} ${item.name}</b>` +
-      `<div class="dim">vs ${eq ? `${eq.icon} ${eq.name}` : '— nothing equipped —'}</div>` +
-      reqWarn +
-      row('Damage', a.dmg, b.dmg) +
-      row('Armor', a.armor, b.armor) +
-      row('Max HP', a.hp, b.hp) +
-      row('Crit %', a.crit, b.crit) +
-      row('Lifesteal %', a.lifesteal, b.lifesteal);
+    const eq = this.equipment.slots[item.slot] ?? null;
+    this.elCompare.innerHTML = compareHtml(item, eq, this.player.level);
     this.elCompare.style.display = 'block';
   }
 
@@ -2236,29 +2176,13 @@ export class Game {
     if (!this.invOpen) return;
     if (this.elInvGold) this.elInvGold.textContent = `${this.inventory.gold}g`;
     if (this.elGearStats) {
-      this.elGearStats.textContent =
-        `DMG ${this.player.attackDamage} · Armor ${this.player.armor} · ` +
-        `HP ${this.player.hp}/${this.player.maxHp} · Crit ${Math.round(this.player.critChance * 100)}% · ` +
-        `LS ${this.player.lifesteal}%`;
+      this.elGearStats.textContent = gearStatsText(this.player);
     }
     if (this.elEquipRow) {
-      const order: ItemSlot[] = ['weapon', 'helm', 'chest', 'boots', 'ring'];
-      this.elEquipRow.innerHTML = order.map((slot) => {
-        const it = this.equipment.slots[slot];
-        return it
-          ? `<div class="equip-slot r-${it.rarity}" data-slot="${slot}" title="${this.itemTooltip(it)}">${it.icon}<span>${slot}</span></div>`
-          : `<div class="equip-slot empty" data-slot="${slot}">+<span>${slot}</span></div>`;
-      }).join('');
+      this.elEquipRow.innerHTML = equipRowHtml(this.equipment.slots);
     }
     if (this.elInvGrid) {
-      this.elInvGrid.innerHTML = this.inventory.slots.map((it) => {
-        if (!it) return '<div class="inv-cell empty"></div>';
-        const usable = this.player.level >= it.levelReq;
-        const tag = this.shopOpen
-          ? `<i>+${sellPrice(it)}g</i>`
-          : it.kind === 'consumable' ? '<i>use</i>' : '';
-        return `<div class="inv-cell r-${it.rarity}${usable ? '' : ' unusable'}" data-uid="${it.uid}" title="${this.itemTooltip(it)}">${it.icon}${tag}</div>`;
-      }).join('');
+      this.elInvGrid.innerHTML = invGridHtml(this.inventory.slots, this.player.level, this.shopOpen);
     }
   }
 
@@ -2267,41 +2191,14 @@ export class Game {
     if (!this.shopOpen) return;
     if (this.elShopGold) this.elShopGold.textContent = `${this.inventory.gold}g`;
     if (this.elShopStock) {
-      const scrollRow = `<div class="shop-row">
-          <div class="shop-icon r-magic">📜</div>
-          <div class="shop-info"><b style="color:${RARITY_COLOR.magic}">Scroll of Town Portal</b>
-          <div class="dim">Teleport to Haven · consumed on use</div></div>
-          <button data-buyscroll="1">20g</button>
-        </div>`;
-      this.elShopStock.innerHTML = scrollRow + this.shopStock.map((it) => {
-        const stats = [
-          it.dmg > 0 ? `${it.dmg} dmg` : '',
-          it.armor > 0 ? `${it.armor} arm` : '',
-          ...it.affixes.map((a) => affixLabel(a)),
-        ].filter((s) => s.length > 0).join(' · ');
-        const afford = this.inventory.gold >= it.value;
-        const req = this.player.level >= it.levelReq;
-        return `<div class="shop-row">
-          <div class="shop-icon r-${it.rarity}">${it.icon}</div>
-          <div class="shop-info"><b style="color:${RARITY_COLOR[it.rarity]}">${it.name}</b>
-          <div class="dim">${stats} · Lv${it.levelReq}</div></div>
-          <button data-buy="${it.uid}" ${afford && req ? '' : 'disabled'}>${it.value}g</button>
-        </div>`;
-      }).join('');
+      this.elShopStock.innerHTML = shopStockHtml(this.shopStock, this.inventory.gold, this.player.level);
     }
   }
 
   private renderPortal(): void {
     if (this.elPortalPanel) this.elPortalPanel.style.display = this.portalOpen ? 'block' : 'none';
     if (!this.portalOpen || !this.elPortalList) return;
-    this.elPortalList.innerHTML = ZONES.map((z) => {
-      const locked = this.player.level < z.minLevel;
-      const current = z.id === this.currentZoneId;
-      return `<div class="portal-card${locked ? ' locked' : ''}${current ? ' current' : ''}" data-travel="${z.id}">
-        <b>${z.name}</b><div class="dim">${z.sub}</div>
-        <div class="dim">${locked ? `🔒 Requires Lv${z.minLevel}` : current ? '● here' : 'Enter →'}</div>
-      </div>`;
-    }).join('');
+    this.elPortalList.innerHTML = portalListHtml(ZONES, this.player.level, this.currentZoneId);
   }
 
   private buyStock(uid: string): void {
@@ -2716,30 +2613,25 @@ export class Game {
 
   private updateHud(): void {
     if (this.elFireCd) {
-      const frac = this.fireTimer / FIREBALL_CD;
-      this.elFireCd.style.height = `${Math.round(frac * 100)}%`;
+      this.elFireCd.style.height = cdHeight(this.fireTimer, FIREBALL_CD);
     }
     if (this.elBlinkCd) {
-      const frac = this.blinkTimer / BLINK_CD;
-      this.elBlinkCd.style.height = `${Math.round(frac * 100)}%`;
+      this.elBlinkCd.style.height = cdHeight(this.blinkTimer, BLINK_CD);
     }
     if (this.elDodgeCd) {
-      const frac = this.player.dodgeCd / DODGE_CD;
-      this.elDodgeCd.style.height = `${Math.round(frac * 100)}%`;
+      this.elDodgeCd.style.height = cdHeight(this.player.dodgeCd, DODGE_CD);
     }
     if (this.elSkill2Cd) {
-      const frac = this.skillTimer / this.skillCdMax;
-      this.elSkill2Cd.style.height = `${Math.round(frac * 100)}%`;
+      this.elSkill2Cd.style.height = cdHeight(this.skillTimer, this.skillCdMax);
     }
     if (this.elSkill3Cd) {
-      const frac = this.skill3Timer / this.skill3CdMax;
-      this.elSkill3Cd.style.height = `${Math.round(frac * 100)}%`;
+      this.elSkill3Cd.style.height = cdHeight(this.skill3Timer, this.skill3CdMax);
     }
-    if (this.elCdnSkill3) this.elCdnSkill3.textContent = this.skill3Timer > 0.05 ? `${Math.ceil(this.skill3Timer)}` : '';
-    if (this.elCdnFire) this.elCdnFire.textContent = this.fireTimer > 0.05 ? `${Math.ceil(this.fireTimer)}` : '';
-    if (this.elCdnBlink) this.elCdnBlink.textContent = this.blinkTimer > 0.05 ? `${Math.ceil(this.blinkTimer)}` : '';
-    if (this.elCdnDodge) this.elCdnDodge.textContent = this.player.dodgeCd > 0.05 ? `${Math.ceil(this.player.dodgeCd)}` : '';
-    if (this.elCdnSkill2) this.elCdnSkill2.textContent = this.skillTimer > 0.05 ? `${Math.ceil(this.skillTimer)}` : '';
+    if (this.elCdnSkill3) this.elCdnSkill3.textContent = cdNum(this.skill3Timer);
+    if (this.elCdnFire) this.elCdnFire.textContent = cdNum(this.fireTimer);
+    if (this.elCdnBlink) this.elCdnBlink.textContent = cdNum(this.blinkTimer);
+    if (this.elCdnDodge) this.elCdnDodge.textContent = cdNum(this.player.dodgeCd);
+    if (this.elCdnSkill2) this.elCdnSkill2.textContent = cdNum(this.skillTimer);
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;
@@ -2751,27 +2643,22 @@ export class Game {
     }
     if (this.elFps) this.elFps.textContent = `${Math.round(this.fpsEma)}`;
     if (this.elState) {
-      this.elState.textContent = !this.player.alive
-        ? 'dead'
-        : (this.player.attackTarget as Monster | null)?.alive
-          ? 'attacking'
-          : this.player.isMoving
-            ? 'moving'
-            : 'idle';
+      this.elState.textContent = stateText(
+        this.player.alive,
+        ((this.player.attackTarget as Monster | null)?.alive) ?? false,
+        this.player.isMoving,
+      );
     }
     if (this.elHpFill) {
-      const frac = (this.player.hp / this.player.maxHp) * 100;
-      this.elHpFill.style.width = `${frac.toFixed(1)}%`;
+      this.elHpFill.style.width = barPct(this.player.hp, this.player.maxHp);
     }
     if (this.elHpText) this.elHpText.textContent = `${this.player.hp}/${this.player.maxHp}`;
     if (this.elMpFill) {
-      const frac = (this.player.mana / this.player.maxMana) * 100;
-      this.elMpFill.style.width = `${frac.toFixed(1)}%`;
+      this.elMpFill.style.width = barPct(this.player.mana, this.player.maxMana);
     }
     if (this.elMpText) this.elMpText.textContent = `${Math.floor(this.player.mana)}/${this.player.maxMana}`;
     if (this.elXpFill) {
-      const frac = (this.player.xp / this.player.xpNext) * 100;
-      this.elXpFill.style.width = `${frac.toFixed(1)}%`;
+      this.elXpFill.style.width = barPct(this.player.xp, this.player.xpNext);
     }
     if (this.elLevel) this.elLevel.textContent = `${this.player.level}`;
     if (this.elKills) this.elKills.textContent = `${this.kills}`;
@@ -2779,30 +2666,19 @@ export class Game {
     if (this.elGold) this.elGold.textContent = `${this.inventory.gold}g`;
     if (this.elZone) this.elZone.textContent = zoneById(this.currentZoneId).name;
     if (this.elPotion) {
-      const q = this.player.potionCooldown > 0 ? ` (${this.player.potionCooldown.toFixed(0)}s)` : '';
-      this.elPotion.innerHTML = `Q<span class="sub">x${this.player.potions}${q}</span>`;
-      this.elPotion.classList.toggle('locked', this.player.potions <= 0);
+      const view = potionHtml(this.player.potions, this.player.potionCooldown);
+      this.elPotion.innerHTML = view.html;
+      this.elPotion.classList.toggle('locked', view.locked);
     }
     if (this.elTpCount || this.elTpSlot) {
-      const n = this.inventory.slots.filter((s) => s?.kind === 'consumable').length;
+      const n = tpScrollCount(this.inventory.slots);
       if (this.elTpCount) this.elTpCount.textContent = `x${n}`;
       if (this.elTpSlot) this.elTpSlot.classList.toggle('locked', n <= 0);
     }
-    const near = this.nearestInteract();
-    const interactKey = codeLabel(getBinds().interact);
+    const prompt = promptFor(this.nearestInteract(), codeLabel(getBinds().interact), this.player.job, this.player.level);
     if (this.elPrompt) {
-      if (near === 'shop') {
-        this.elPrompt.textContent = `${interactKey} — Trade`;
-        this.elPrompt.style.opacity = '1';
-      } else if (near === 'portal') {
-        this.elPrompt.textContent = `${interactKey} — Travel`;
-        this.elPrompt.style.opacity = '1';
-      } else if (near === 'sanctum') {
-        const ready = this.player.job === null && this.player.level >= ADVANCE_LEVEL;
-        this.elPrompt.textContent = ready ? `${interactKey} — Advance job ⭐` : `${interactKey} — Sanctum (Lv10)`;
-        this.elPrompt.style.opacity = '1';
-      } else if (near === 'stash') {
-        this.elPrompt.textContent = `${interactKey} — Stash`;
+      if (prompt.visible) {
+        this.elPrompt.textContent = prompt.text;
         this.elPrompt.style.opacity = '1';
       } else {
         this.elPrompt.style.opacity = '0';
