@@ -194,6 +194,8 @@ export class Game {
   private elZone: HTMLElement | null = null;
   private elSaveState: HTMLElement | null = null;
   private elFireCd: HTMLElement | null = null;
+  private elFireSlot: HTMLElement | null = null;
+  private elHelpSkill1: HTMLElement | null = null;
   private elBlinkCd: HTMLElement | null = null;
   private elDodgeCd: HTMLElement | null = null;
   private elPotion: HTMLElement | null = null;
@@ -564,6 +566,8 @@ export class Game {
     this.elZone = $('stat-zone');
     this.elSaveState = $('stat-save');
     this.elFireCd = $('cd-fire');
+    this.elFireSlot = $('skill-fire');
+    this.elHelpSkill1 = $('help-skill1');
     this.elBlinkCd = $('cd-blink');
     this.elDodgeCd = $('cd-dodge');
     this.elPotion = $('skill-potion');
@@ -1093,6 +1097,7 @@ export class Game {
       this.hintUlt();
     }
     if (def.id === 'city') this.maybeSpawnCityAxe();
+    this.refreshSkillSlot1();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
   }
@@ -1259,7 +1264,10 @@ export class Game {
       }
       if (!this.started || this.paused) return;
       const b = getBinds();
-      if (e.code === b.fire) this.tryFireball();
+      if (e.code === b.fire) {
+        if (this.player.baseClass === 'warrior') this.trySlash();
+        else this.tryFireball();
+      }
       else if (e.code === b.job) this.castJobSkill();
       else if (e.code === b.ult) this.castUlt();
       else if (e.code === b.potion) this.tryPotion();
@@ -1302,6 +1310,20 @@ export class Game {
     return null;
   }
 
+  /** Attack-move: chase until in range, then hold and swing. */
+  private attackMove(m: Monster): void {
+    this.player.attackTarget = m;
+    this.tmpVec.copy(m.position).sub(this.player.position).setY(0);
+    const len = this.tmpVec.length();
+    if (len > this.player.attackRange) {
+      this.tmpVec.multiplyScalar((len - (this.player.attackRange - 0.4)) / len).add(this.player.position);
+      this.player.setTarget(this.tmpVec);
+    } else {
+      this.player.stop();
+    }
+    this.showMarker(m.position, 0xff6b6b);
+  }
+
   private findInteractFromHit(obj: THREE.Object3D | null): 'shop' | 'portal' | 'sanctum' | 'stash' | null {
     let o: THREE.Object3D | null = obj;
     while (o) {
@@ -1324,16 +1346,29 @@ export class Game {
     if (monsterHits.length > 0) {
       const m = this.findMonsterFromHit(monsterHits[0].object);
       if (m) {
-        this.player.attackTarget = m;
-        this.tmpVec.copy(m.position).sub(this.player.position).setY(0);
-        const len = this.tmpVec.length();
-        if (len > this.player.attackRange) {
-          this.tmpVec.multiplyScalar((len - (this.player.attackRange - 0.4)) / len).add(this.player.position);
-          this.player.setTarget(this.tmpVec);
-        } else {
-          this.player.stop();
+        this.attackMove(m);
+        return;
+      }
+    }
+
+    // 1b) Click forgiveness: ground click landing near a monster counts as attack.
+    const forgivenessHits = this.raycaster.intersectObject(this.ground, false);
+    if (forgivenessHits.length > 0) {
+      const p = forgivenessHits[0].point;
+      let best: Monster | null = null;
+      let bd = 2.4 * 2.4;
+      for (const m of this.monsters) {
+        if (!m.alive) continue;
+        const dx = m.position.x - p.x;
+        const dz = m.position.z - p.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < bd) {
+          bd = d2;
+          best = m;
         }
-        this.showMarker(m.position, 0xff6b6b);
+      }
+      if (best) {
+        this.attackMove(best);
         return;
       }
     }
@@ -1500,6 +1535,44 @@ export class Game {
     return false;
   }
 
+  /** Warrior slot-1: Heavy Slash — one single-target heavy weapon swing (2.3x). */
+  private trySlash(): void {
+    if (!this.player.alive || this.fireTimer > 0) return;
+    if (!this.spendSkillMana(FIREBALL_COST)) return;
+    this.fireTimer = FIREBALL_CD;
+    // Prefer the current attack target, else the nearest monster in reach.
+    let target = this.player.attackTarget as Monster | null;
+    if (!target || !target.alive) {
+      let best = Infinity;
+      target = null;
+      for (const m of this.monsters) {
+        if (!m.alive) continue;
+        const d = this.player.position.distanceTo(m.position);
+        if (d < best) {
+          best = d;
+          target = m;
+        }
+      }
+      if (!target || best > this.player.attackRange + 0.6) target = null;
+    } else if (this.player.position.distanceTo(target.position) > this.player.attackRange + 0.6) {
+      target = null;
+    }
+    this.player.swingAnim = 1;
+    this.sound.swing();
+    if (!target) return; // swung at air — mana spent, nothing hit
+    this.player.faceInstant(target.position);
+    const roll = rollPlayerDamage(this.effDmg(this.player.attackDamage) * 2.3, this.player.critChance);
+    const died = target.takeDamage(roll.amount, roll.isCrit, this.numbers);
+    this.healLifesteal(roll.amount);
+    this.sound.hit(roll.isCrit);
+    this.effects.burst(target.position.x, 1.4, target.position.z, { color: 0xffd21f, count: 8, speed: 4, life: 0.35, size: 0.9 });
+    if (died) {
+      this.onMonsterKilled(target);
+      this.player.clearAttackTarget();
+    }
+    this.updateBossBar();
+  }
+
   private tryPotion(): void {
     if (this.player.drinkPotion()) {
       this.sound.potion();
@@ -1646,8 +1719,18 @@ export class Game {
   }
 
   /** Sync skill slot 2 with the current job (locked until advancement). */
-  private refreshSkillSlot(): void {
-    if (!this.elSkill2) return;
+  /** Slot-1 is class-bound: Heavy Slash for warriors, Fireball for the rest. */
+  private refreshSkillSlot1(): void {
+    const warrior = this.player.baseClass === 'warrior';
+    if (this.elFireSlot) {
+      this.elFireSlot.title = warrior
+        ? 'Heavy Slash (1) — 2.3x melee · 8 MP'
+        : 'Fireball (1) — 2x damage · 8 MP';
+    }
+    if (this.elHelpSkill1) this.elHelpSkill1.textContent = warrior ? 'heavy slash' : 'fireball';
+  }
+
+  private refreshSkillSlot(): void {    if (!this.elSkill2) return;
     const job = jobById(this.player.job);
     if (job) {
       this.elSkill2.classList.remove('locked');
@@ -2099,7 +2182,9 @@ export class Game {
 
   private renderControls(): void {
     if (!this.elControlsList) return;
-    this.elControlsList.innerHTML = controlsListHtml(getBinds(), this.rebindAction);
+    const labels = { ...BIND_LABELS };
+    if (this.player.baseClass === 'warrior') labels.fire = 'Heavy Slash';
+    this.elControlsList.innerHTML = controlsListHtml(getBinds(), this.rebindAction, labels);
   }
 
   private openStash(): void {

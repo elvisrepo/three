@@ -15,7 +15,7 @@
         <div id="hud-help" class="panel">
           <strong>ARPG — Phase 2 Loop</strong>
           <div><b>Click</b> monster: attack · ground: move · crystal: pick up</div>
-          <div><b>1</b> fireball · <b>2</b> job skill (Lv10+) · <b>3</b> ultimate (Lv20+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
+          <div><b>1</b> <span id="help-skill1">fireball</span> · <b>2</b> job skill (Lv10+) · <b>3</b> ultimate (Lv20+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
           <div><b>E</b> blink · <b>Space</b> dodge · <b>T</b> town portal · <b>F</b> talk/portal</div>
           <div><b>WASD</b> move · <b>wheel</b> zoom (out to 40) · hover gear to compare</div>
           <div>👑 on minimap = live boss · <b>M</b> mute · <b>Esc</b> pause/menu</div>
@@ -43,7 +43,7 @@
           <div id="xp-bar"><div id="xp-fill"></div></div>
           <div id="hud-skillbar">
             <div class="skill" title="Left-click monster = auto attack">⚔️</div>
-            <div class="skill" title="Fireball (1) — 2x damage · 8 MP">1<span class="cd-num" id="cdn-fire"></span><div id="cd-fire" class="cd"></div></div>
+            <div class="skill" id="skill-fire" title="Fireball (1) — 2x damage · 8 MP">1<span class="cd-num" id="cdn-fire"></span><div id="cd-fire" class="cd"></div></div>
             <div class="skill locked" id="skill-job" title="Reach Lv10 and choose a job to unlock">2<span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div></div>
             <div class="skill locked" id="skill-ult" title="Lv20 ultimate — unlocks automatically for your job">3<span class="cd-num" id="cdn-skill3"></span><div id="cd-skill3" class="cd"></div></div>
             <div class="skill" title="Blink (E) — teleport toward cursor">E<span class="cd-num" id="cdn-blink"></span><div id="cd-blink" class="cd"></div></div>
