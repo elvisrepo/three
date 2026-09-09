@@ -67,7 +67,8 @@ html, body, #app {
   top: 176px;
   right: 12px;
   border-radius: 8px;
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: crosshair;
 }
 
 #hud-help {

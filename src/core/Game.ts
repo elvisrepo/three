@@ -537,6 +537,30 @@ export class Game {
     this.elXpRate = $('stat-xprate');
     this.minimap = $('minimap') as HTMLCanvasElement | null;
     this.mmCtx = this.minimap?.getContext('2d') ?? null;
+    // Minimap click-to-move: map px → world coords → setTarget (display-only before).
+    this.minimap?.addEventListener('pointerdown', (e) => {
+      if (!this.started || !this.player.alive || this.paused) return;
+      if (e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const canvas = this.minimap;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const mx = ((e.clientX - rect.left) / rect.width) * canvas.width;
+      const mz = ((e.clientY - rect.top) / rect.height) * canvas.height;
+      const S = canvas.width;
+      this.tmpVec.set(
+        THREE.MathUtils.clamp((mx / S) * 60 - 30, -29, 29),
+        0,
+        THREE.MathUtils.clamp((mz / S) * 60 - 30, -29, 29),
+      );
+      this.player.clearAttackTarget();
+      this.pickupUid = null;
+      this.player.setTarget(this.tmpVec);
+      this.showMarker(this.tmpVec, 0xffd479);
+      this.sound.unlock();
+    });
     this.elFlash = $('flash');
     this.elFade = $('fade');
     this.syncMuteIcon();
