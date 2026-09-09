@@ -40,6 +40,8 @@ export interface ZoneDef {
   sanctumPos: [number, number];
   /** Shared stash chest (Haven only, [0,0] = unused). */
   chestPos: [number, number];
+  /** Healing fountain (Haven only, [0,0] = unused). */
+  fountainPos: [number, number];
 }
 
 export const ZONES: ZoneDef[] = [
@@ -62,6 +64,7 @@ export const ZONES: ZoneDef[] = [
     bossPos: [0, -20],
     sanctumPos: [0, -8],
     chestPos: [-4, -6],
+    fountainPos: [4, 4],
   },
   {
     id: 'meadow',
@@ -84,6 +87,7 @@ export const ZONES: ZoneDef[] = [
     bossPos: [12, -14],
     sanctumPos: [0, 0],
     chestPos: [0, 0],
+    fountainPos: [0, 0],
   },
   {
     id: 'crypt',
@@ -104,6 +108,7 @@ export const ZONES: ZoneDef[] = [
     bossPos: [-12, -14],
     sanctumPos: [0, 0],
     chestPos: [0, 0],
+    fountainPos: [0, 0],
   },
   {
     id: 'ember',
@@ -124,6 +129,7 @@ export const ZONES: ZoneDef[] = [
     bossPos: [0, -18],
     sanctumPos: [0, 0],
     chestPos: [0, 0],
+    fountainPos: [0, 0],
   },
 ];
 

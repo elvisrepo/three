@@ -17,6 +17,7 @@ export interface ClassDef {
   icon: string;
   color: number;
   maxHp: number;
+  maxMana: number;
   damage: number;
   speed: number;
   crit: number;
@@ -34,6 +35,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     icon: '⚔️',
     color: 0x4da3ff,
     maxHp: 130,
+    maxMana: 30,
     damage: 15,
     speed: 6,
     crit: 0.08,
@@ -48,6 +50,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     icon: '🏹',
     color: 0x5dff6b,
     maxHp: 95,
+    maxMana: 45,
     damage: 13,
     speed: 6.8,
     crit: 0.15,
@@ -61,6 +64,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     icon: '🔥',
     color: 0xc77dff,
     maxHp: 85,
+    maxMana: 65,
     damage: 11,
     speed: 5.8,
     crit: 0.1,

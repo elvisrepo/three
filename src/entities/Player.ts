@@ -55,6 +55,8 @@ export class Player {
   xpNext = xpNeed(1);
   maxHp = 100;
   hp = 100;
+  maxMana = 30;
+  mana = 30;
   attackDamage = 13;
   attackRange = 2.8;
   attackCooldown = 0.45;
@@ -173,6 +175,8 @@ export class Player {
     this.job = null;
     this.maxHp = def.maxHp;
     this.hp = def.maxHp;
+    this.maxMana = def.maxMana;
+    this.mana = def.maxMana;
     this.attackDamage = def.damage;
     this.speed = def.speed;
     this.critChance = def.crit;
@@ -220,6 +224,13 @@ export class Player {
     this.prevAttr = b;
   }
 
+  /** Spend mana. Returns false (spends nothing) if insufficient. */
+  spendMana(amount: number): boolean {
+    if (!this.alive || this.mana < amount) return false;
+    this.mana -= amount;
+    return true;
+  }
+
   /** Spend one stat point on an attribute. Returns false if none left. */
   allocate(attr: keyof Attrs): boolean {
     if (this.statPoints <= 0) return false;
@@ -237,6 +248,7 @@ export class Player {
     for (let l = 2; l <= target; l++) {
       const b = playerLevelUpBonus(l);
       this.maxHp += b.maxHp;
+      this.maxMana += b.maxMana;
       this.attackDamage += b.damage;
     }
     this.level = target;
@@ -424,9 +436,11 @@ export class Player {
       this.xpNext = xpNeed(this.level);
       const bonus = playerLevelUpBonus(this.level);
       this.maxHp += bonus.maxHp;
+      this.maxMana += bonus.maxMana;
       this.attackDamage += bonus.damage;
       this.statPoints += 3;
       this.hp = Math.min(this.maxHp, this.hp + Math.round(this.maxHp * 0.4));
+      this.mana = Math.min(this.maxMana, this.mana + bonus.maxMana);
       return true;
     }
     return false;
@@ -442,6 +456,7 @@ export class Player {
 
   respawn(at: THREE.Vector3): void {
     this.hp = this.maxHp;
+    this.mana = this.maxMana;
     this.alive = true;
     this.group.position.copy(at).setY(0);
     this.group.rotation.set(0, 0, 0);
@@ -473,6 +488,9 @@ export class Player {
     this.attackTimer = Math.max(0, this.attackTimer - dt);
     this.potionCooldown = Math.max(0, this.potionCooldown - dt);
     this.dodgeCd = Math.max(0, this.dodgeCd - dt);
+    if (this.alive && this.mana < this.maxMana) {
+      this.mana = Math.min(this.maxMana, this.mana + (2 + this.maxMana * 0.03) * dt);
+    }
     if (this.buffTimer > 0) {
       this.buffTimer -= dt;
       if (this.buffTimer <= 0) this.buffDmgMult = 1;

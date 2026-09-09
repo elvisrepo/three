@@ -40,6 +40,7 @@ const _aoeVec = new THREE.Vector3();
 
 const FIREBALL_CD = 3;
 const FIREBALL_MULT = 2.1;
+const FIREBALL_COST = 8;
 const BLINK_CD = 4;
 const BLINK_RANGE = 9;
 const RESPAWN_DELAY = 2.5;
@@ -99,6 +100,9 @@ export class Game {
   private portalMesh!: THREE.Group;
   private sanctum!: THREE.Group;
   private chest!: THREE.Group;
+  private fountain!: THREE.Group;
+  private fountainWater!: THREE.MeshStandardMaterial;
+  private fountainFxT = 0;
   private paused = false;
   private stashOpen = false;
   private rebindAction: BindAction | null = null;
@@ -159,6 +163,8 @@ export class Game {
   private elFps: HTMLElement | null = null;
   private elHpFill: HTMLElement | null = null;
   private elHpText: HTMLElement | null = null;
+  private elMpFill: HTMLElement | null = null;
+  private elMpText: HTMLElement | null = null;
   private elXpFill: HTMLElement | null = null;
   private elLevel: HTMLElement | null = null;
   private elKills: HTMLElement | null = null;
@@ -403,6 +409,38 @@ export class Game {
     sanctum.userData.interact = 'sanctum';
     this.scene.add(sanctum);
     this.sanctum = sanctum;
+
+    // Healing fountain (Haven): stand close to regenerate HP + mana
+    const fountain = new THREE.Group();
+    const basin = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.1, 1.3, 0.7, 16),
+      new THREE.MeshStandardMaterial({ color: 0x8a93a3, roughness: 0.8 }),
+    );
+    basin.position.y = 0.35;
+    basin.castShadow = true;
+    this.fountainWater = new THREE.MeshStandardMaterial({
+      color: 0x3fc9ff, emissive: 0x1a7fd6, emissiveIntensity: 0.8,
+      transparent: true, opacity: 0.85, roughness: 0.2,
+    });
+    const water = new THREE.Mesh(new THREE.CircleGeometry(0.95, 24), this.fountainWater);
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0.72;
+    const pillar = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.16, 0.24, 1.0, 10),
+      new THREE.MeshStandardMaterial({ color: 0x8a93a3, roughness: 0.8 }),
+    );
+    pillar.position.y = 1.0;
+    pillar.castShadow = true;
+    const orb = new THREE.Mesh(
+      new THREE.SphereGeometry(0.22, 12, 10),
+      new THREE.MeshStandardMaterial({ color: 0x9ae6ff, emissive: 0x3fc9ff, emissiveIntensity: 1.4, roughness: 0.2 }),
+    );
+    orb.position.y = 1.65;
+    const flabel = this.makeLabel('⛲ FOUNTAIN');
+    flabel.position.y = 2.7;
+    fountain.add(basin, water, pillar, orb, flabel);
+    this.scene.add(fountain);
+    this.fountain = fountain;
   }
 
   private rebuildColliders(): void {
@@ -410,6 +448,7 @@ export class Game {
     if (this.shopNpc.visible) extra.push({ pos: this.shopNpc.position, radius: 0.9 });
     if (this.portalMesh.visible) extra.push({ pos: this.portalMesh.position, radius: 1.1 });
     if (this.chest.visible) extra.push({ pos: this.chest.position, radius: 0.9 });
+    if (this.fountain.visible) extra.push({ pos: this.fountain.position, radius: 1.2 });
     // Note: terrain colliders (statics + dummies) are the stable base array.
     this.colliders = [...this.statics, ...extra];
   }
@@ -438,6 +477,8 @@ export class Game {
     this.elFps = $('stat-fps');
     this.elHpFill = $('hp-fill');
     this.elHpText = $('hp-text');
+    this.elMpFill = $('mp-fill');
+    this.elMpText = $('mp-text');
     this.elXpFill = $('xp-fill');
     this.elLevel = $('stat-level');
     this.elKills = $('stat-kills');
@@ -823,6 +864,7 @@ export class Game {
       this.player.critChance += job.bonus.crit;
     }
     this.player.hp = Math.min(s.hp, this.player.maxHp);
+    this.player.mana = Math.min(s.mana ?? this.player.maxMana, this.player.maxMana);
     this.player.potions = s.potions;
     if (!this.player.alive || this.player.hp <= 0) {
       this.player.alive = true;
@@ -843,6 +885,8 @@ export class Game {
       gold: this.inventory.gold,
       hp: this.player.hp,
       maxHp: this.player.maxHp,
+      mana: Math.floor(this.player.mana),
+      maxMana: this.player.maxMana,
       damage: this.player.attackDamage,
       crit: this.player.critChance,
       potions: this.player.potions,
@@ -902,10 +946,12 @@ export class Game {
     this.portalMesh.position.set(def.portalPos[0], 0, def.portalPos[1]);
     this.sanctum.position.set(def.sanctumPos[0], 0, def.sanctumPos[1]);
     this.chest.position.set(def.chestPos[0], 0, def.chestPos[1]);
+    this.fountain.position.set(def.fountainPos[0], 0, def.fountainPos[1]);
     this.shopNpc.visible = def.hasShop;
     this.portalMesh.visible = def.hasPortal;
     this.sanctum.visible = def.id === 'city';
     this.chest.visible = def.id === 'city';
+    this.fountain.visible = def.id === 'city';
     this.rebuildColliders();
 
     if (def.monsters) this.spawnZoneMonsters(def);
@@ -1275,6 +1321,7 @@ export class Game {
     }
     if (this.tmpVec.lengthSq() < 1e-6) return;
     this.tmpVec.normalize();
+    if (!this.spendSkillMana(FIREBALL_COST)) return;
     this.projectiles.fire(
       this.player.position,
       this.tmpVec,
@@ -1292,6 +1339,13 @@ export class Game {
       this.player.position.z + this.tmpVec.z,
       { color: 0xff9a2e, count: 8, speed: 3, life: 0.35, size: 0.8 },
     );
+  }
+
+  /** Spend skill mana with feedback. Returns false (casts nothing) if short. */
+  private spendSkillMana(cost: number): boolean {
+    if (this.player.spendMana(cost)) return true;
+    this.showToast('Not enough mana.');
+    return false;
   }
 
   private tryPotion(): void {
@@ -1446,7 +1500,7 @@ export class Game {
     if (job) {
       this.elSkill2.classList.remove('locked');
       this.elSkill2.innerHTML = `${job.skill.icon}<span class="key">2</span><span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div>`;
-      this.elSkill2.title = `${job.skill.name} (2) — ${job.skill.desc}`;
+      this.elSkill2.title = `${job.skill.name} (2) — ${job.skill.desc} · ${job.skill.cost} MP`;
     } else {
       this.elSkill2.classList.add('locked');
       this.elSkill2.innerHTML = `2<span class="cd-num" id="cdn-skill2"></span><div id="cd-skill2" class="cd"></div>`;
@@ -1467,7 +1521,7 @@ export class Game {
     if (job && this.player.level >= ULT_LEVEL) {
       this.elSkill3.classList.remove('locked');
       this.elSkill3.innerHTML = `${job.ultimate.icon}<span class="key">3</span><span class="cd-num" id="cdn-skill3"></span><div id="cd-skill3" class="cd"></div>`;
-      this.elSkill3.title = `${job.ultimate.name} (3) — ${job.ultimate.desc}`;
+      this.elSkill3.title = `${job.ultimate.name} (3) — ${job.ultimate.desc} · ${job.ultimate.cost} MP`;
     } else {
       this.elSkill3.classList.add('locked');
       this.elSkill3.innerHTML = `3<span class="cd-num" id="cdn-skill3"></span><div id="cd-skill3" class="cd"></div>`;
@@ -1488,6 +1542,10 @@ export class Game {
     if (!job) {
       if (this.player.level >= ADVANCE_LEVEL) this.showToast('⭐ Visit the golden Sanctum in Haven to advance!');
       else this.showToast('Reach Lv10 and choose a job to unlock this slot.');
+      return;
+    }
+    if (this.player.mana < job.skill.cost) {
+      this.showToast('Not enough mana.');
       return;
     }
     const dmg = this.effDmg(this.player.attackDamage);
@@ -1554,6 +1612,7 @@ export class Game {
       default:
         return;
     }
+    this.player.spendMana(job.skill.cost);
     this.skillTimer = job.skill.cooldown;
     this.skillCdMax = job.skill.cooldown;
   }
@@ -1569,6 +1628,10 @@ export class Game {
     const ult = job.ultimate;
     const dmg = this.effDmg(this.player.attackDamage);
     let cd = ult.cooldown;
+    if (this.player.mana < ult.cost) {
+      this.showToast('Not enough mana.');
+      return;
+    }
     switch (ult.id) {
       case 'judgment': {
         this.player.swingAnim = 1;
@@ -1639,6 +1702,7 @@ export class Game {
       default:
         return;
     }
+    this.player.spendMana(ult.cost);
     this.skill3Timer = cd;
     this.skill3CdMax = cd;
   }
@@ -1990,7 +2054,7 @@ export class Game {
       attrRow('int', 'INT', '+3% fireball each') +
       attrRow('vit', 'VIT', '+6 HP each') +
       `<div class="derived" id="char-derived">DMG ${p.attackDamage}${p.buffTimer > 0 ? ' 😡x2' : ''} · Armor ${p.armor}<br>` +
-      `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
+      `HP ${p.hp}/${p.maxHp} · MP ${Math.floor(p.mana)}/${p.maxMana} · Crit ${Math.round(p.critChance * 100)}%<br>` +
       `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}</div>`;
   }
 
@@ -2010,7 +2074,7 @@ export class Game {
     if (der) {
       der.innerHTML =
         `DMG ${p.attackDamage}${p.buffTimer > 0 ? ' 😡x2' : ''} · Armor ${p.armor}<br>` +
-        `HP ${p.hp}/${p.maxHp} · Crit ${Math.round(p.critChance * 100)}%<br>` +
+        `HP ${p.hp}/${p.maxHp} · MP ${Math.floor(p.mana)}/${p.maxMana} · Crit ${Math.round(p.critChance * 100)}%<br>` +
         `Lifesteal ${p.lifesteal}% · Fire x${p.fireMult.toFixed(2)}`;
     }
   }
@@ -2304,9 +2368,23 @@ export class Game {
     if (btn) btn.textContent = this.sound.muted ? '🔇' : '🔊';
   }
 
+  /** Haven fountain aura: stand close to regenerate HP + mana. City only. */
+  private fountainTick(dt: number): void {
+    if (!this.fountain.visible) return;
+    this.fountainWater.emissiveIntensity = 0.7 + Math.sin(performance.now() * 0.004) * 0.3;
+    if (this.currentZoneId !== 'city' || !this.player.alive) return;
+    if (this.player.position.distanceTo(this.fountain.position) > 3.2) return;
+    this.player.hp = Math.min(this.player.maxHp, this.player.hp + this.player.maxHp * 0.25 * dt);
+    this.player.mana = Math.min(this.player.maxMana, this.player.mana + this.player.maxMana * 0.6 * dt);
+    this.fountainFxT -= dt;
+    if (this.fountainFxT <= 0) {
+      this.fountainFxT = 0.5;
+      this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0x5dd9ff, count: 4, speed: 2, life: 0.5, size: 0.7 });
+    }
+  }
+
   /** Advancement only happens inside the Haven sanctum circle. */
-  private trySanctum(): void {
-    if (this.player.job !== null) {
+  private trySanctum(): void {    if (this.player.job !== null) {
       this.showToast('Your path is already chosen.');
       return;
     }
@@ -2368,6 +2446,7 @@ export class Game {
     this.skillTimer = Math.max(0, this.skillTimer - dt);
     this.skill3Timer = Math.max(0, this.skill3Timer - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
+    this.fountainTick(dt);
 
     this.autosaveTimer -= dt;
     if (this.autosaveTimer <= 0) {
@@ -2626,6 +2705,11 @@ export class Game {
       this.elHpFill.style.width = `${frac.toFixed(1)}%`;
     }
     if (this.elHpText) this.elHpText.textContent = `${this.player.hp}/${this.player.maxHp}`;
+    if (this.elMpFill) {
+      const frac = (this.player.mana / this.player.maxMana) * 100;
+      this.elMpFill.style.width = `${frac.toFixed(1)}%`;
+    }
+    if (this.elMpText) this.elMpText.textContent = `${Math.floor(this.player.mana)}/${this.player.maxMana}`;
     if (this.elXpFill) {
       const frac = (this.player.xp / this.player.xpNext) * 100;
       this.elXpFill.style.width = `${frac.toFixed(1)}%`;

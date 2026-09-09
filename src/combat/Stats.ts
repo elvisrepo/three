@@ -22,9 +22,10 @@ export function rollMonsterDamage(base: number): number {
 }
 
 /** Player growth per level — small but noticeable. */
-export function playerLevelUpBonus(level: number): { maxHp: number; damage: number } {
+export function playerLevelUpBonus(level: number): { maxHp: number; maxMana: number; damage: number } {
   return {
     maxHp: 14,
+    maxMana: 5,
     damage: 2 + Math.floor(level / 3),
   };
 }

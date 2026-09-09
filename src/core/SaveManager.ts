@@ -13,6 +13,8 @@ export interface CharacterSave {
   gold: number;
   hp: number;
   maxHp: number;
+  mana?: number;
+  maxMana?: number;
   damage: number;
   crit: number;
   potions: number;
