@@ -59,6 +59,38 @@ function randi(a: number, b: number): number {
   return a + Math.floor(Math.random() * (b - a + 1));
 }
 
+/** Dense spiky oval shell for the Rampage body aura (drawn once). */
+function flameTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d');
+  if (!ctx) throw new Error('2d canvas not supported');
+  const grad = ctx.createRadialGradient(128, 140, 8, 128, 140, 126);
+  grad.addColorStop(0, 'rgba(255,240,248,0.95)');
+  grad.addColorStop(0.45, 'rgba(255,150,200,0.75)');
+  grad.addColorStop(0.72, 'rgba(255,30,120,0.65)');
+  grad.addColorStop(0.9, 'rgba(220,0,100,0.4)');
+  grad.addColorStop(1, 'rgba(220,0,100,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  // Smooth oval base + many small teeth (facets read as shards — avoid).
+  const teeth = 44;
+  for (let i = 0; i <= teeth; i++) {
+    const a = (i / teeth) * Math.PI * 2;
+    const needle = Math.pow(Math.abs(Math.sin(a * 22 + 1.0)), 2) * 20;
+    const x = 128 + Math.cos(a) * (78 + needle);
+    const y = 140 + Math.sin(a) * (95 + needle * 1.1);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 /** Delayed ground-targeted blast (meteor, frost nova telegraph). */
 interface PendingAoe {
   x: number;
@@ -156,7 +188,6 @@ export class Game {
   private skill3Timer = 0;
   private skill3CdMax = 1;
   private ultHintShown = false;
-  private buffFxAcc = 0;
   private whirlTimer = 0;
   /** Whirlwind: time to next damage spin + damage per spin (stored at cast). */
   private whirlTick = 0;
@@ -169,6 +200,12 @@ export class Game {
   /** Twin blade glows parented to the player — spin with the body so rotation reads. */
   private whirlBlades!: THREE.Group;
   private whirlBladeMats: THREE.MeshBasicMaterial[] = [];
+  /** Rampage body aura: layered flame billboards + fire light riding the player. */
+  private rampageFx!: THREE.Group;
+  private rampageSprites: THREE.Sprite[] = [];
+  private rampageLight!: THREE.PointLight;
+  private rampageFade = 0;
+  private rampageEmberAcc = 0;
   private sanctumHintShown = false;
   private deathTimer = 0;
   private camShake = 0;
@@ -271,6 +308,7 @@ export class Game {
     this.setupNPCs();
     this.setupClickMarker();
     this.setupWhirlwind();
+    this.setupRampage();
     this.bindInput();
     this.cacheHud();
     this.buildCharSelect();
@@ -548,6 +586,41 @@ export class Game {
     blades.visible = false;
     this.player.group.add(blades);
     this.whirlBlades = blades;
+  }
+
+  /** Berserker Rampage aura: one vertical flame column the character stands inside. Built once. */
+  private setupRampage(): void {
+    const tex = flameTexture();
+    const layers = [
+      { color: 0xff1f7a, w: 3.6, h: 4.4, y: 2.0, opacity: 0.8 },
+      { color: 0xffcfe4, w: 2.2, h: 3.0, y: 1.8, opacity: 0.85 },
+    ];
+    const g = new THREE.Group();
+    for (const l of layers) {
+      const mat = new THREE.SpriteMaterial({
+        map: tex,
+        color: l.color,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        // Draw over the body so the character reads as *inside* the flames.
+        depthTest: false,
+        depthWrite: false,
+      });
+      const s = new THREE.Sprite(mat);
+      s.position.y = l.y;
+      s.scale.set(l.w, l.h, 1);
+      s.renderOrder = 38;
+      s.userData = { w: l.w, h: l.h, opacity: l.opacity, phase: Math.random() * 6 };
+      g.add(s);
+      this.rampageSprites.push(s);
+    }
+    this.rampageLight = new THREE.PointLight(0xff2e88, 0, 9, 2);
+    this.rampageLight.position.y = 1.6;
+    g.add(this.rampageLight);
+    g.visible = false;
+    this.scene.add(g);
+    this.rampageFx = g;
   }
 
   private cacheHud(): void {
@@ -1889,7 +1962,7 @@ export class Game {
         this.player.buffTimer = 8;
         this.player.swingAnim = 1;
         this.sound.roar();
-        this.effects.ring(this.player.position.x, this.player.position.z, 0xff3b3b, 3.5);
+        this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xff2e88, count: 22, speed: 6, life: 0.6, size: 1.1 });
         this.numbers.spawn(this.player.position, 'RAMPAGE!', { color: '#ff3b3b', crit: true, scale: 1.6 });
         break;
       }
@@ -2653,12 +2726,33 @@ export class Game {
       }
     }
 
-    // Rampage aura: pulsing red ring while the damage buff holds
-    if (this.player.buffTimer > 0) {
-      this.buffFxAcc -= dt;
-      if (this.buffFxAcc <= 0) {
-        this.buffFxAcc = 0.4;
-        this.effects.ring(this.player.position.x, this.player.position.z, 0xff3b3b, 2.5, 0.4);
+    // Rampage body aura: pinned to the buff clock — full strength every frame
+    // buffTimer is alive, short dying wisp only after it hits zero.
+    if (this.player.buffTimer > 0) this.rampageFade = 1;
+    else if (this.rampageFade > 0) {
+      this.rampageFade = Math.max(0, this.rampageFade - dt * 2.5);
+    }
+    if (this.rampageFade > 0) {
+      this.rampageFx.visible = this.rampageFade > 0.01;
+      this.rampageFx.position.set(this.player.position.x, 0, this.player.position.z);
+      const t = performance.now() / 1000;
+      for (const s of this.rampageSprites) {
+        const u = s.userData as { w: number; h: number; opacity: number; phase: number };
+        s.scale.set(u.w * (1 + 0.05 * Math.sin(t * 13 + u.phase)), u.h * (1 + 0.07 * Math.sin(t * 11 + u.phase)), 1);
+        // Upright column — only a gentle sway, never spun.
+        s.material.rotation = 0.06 * Math.sin(t * 2 + u.phase);
+        s.material.opacity = u.opacity * this.rampageFade * (0.85 + 0.15 * Math.sin(t * 29 + u.phase));
+      }
+      this.rampageLight.intensity = (26 + Math.sin(t * 37) * 8) * this.rampageFade;
+      if (this.player.buffTimer > 0) {
+        this.rampageEmberAcc -= dt;
+        if (this.rampageEmberAcc <= 0) {
+          this.rampageEmberAcc = 0.12;
+          this.effects.burst(this.player.position.x, 0.4, this.player.position.z, {
+            color: Math.random() < 0.5 ? 0xff2e88 : 0xff9ec7,
+            count: 2, speed: 1.2, up: 5, gravity: -1, life: 0.7, size: 0.8,
+          });
+        }
       }
     }
 
