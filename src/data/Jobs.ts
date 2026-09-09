@@ -45,7 +45,7 @@ export const JOBS: JobDef[] = [
     icon: '🪓',
     desc: 'Spinning death. Whirlwind hits all around.',
     bonus: { maxHp: 20, damage: 8, crit: 0.02 },
-    skill: { id: 'whirlwind', name: 'Whirlwind', icon: '🌪️', cooldown: 6, cost: 14, desc: 'Spin: 1.8x to all within 4m.' },
+    skill: { id: 'whirlwind', name: 'Whirlwind', icon: '🌪️', cooldown: 6, cost: 14, desc: 'Spin 1.2s: 1.0x per spin to all within 4m. Move while spinning.' },
     ultimate: { id: 'rampage', name: 'Rampage', icon: '😡', cooldown: 30, cost: 30, desc: '8s of double damage.' },
   },
   {

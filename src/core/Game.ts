@@ -157,6 +157,14 @@ export class Game {
   private ultHintShown = false;
   private buffFxAcc = 0;
   private whirlTimer = 0;
+  /** Whirlwind: time to next damage spin + damage per spin (stored at cast). */
+  private whirlTick = 0;
+  private whirlDmg = 0;
+  /** Persistent orbital flame bands + fire light (Diablo-style swirl, toggled per spin). */
+  private whirlFx!: THREE.Group;
+  private whirlBands: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>[] = [];
+  private whirlLight!: THREE.PointLight;
+  private whirlFade = 0;
   private sanctumHintShown = false;
   private deathTimer = 0;
   private camShake = 0;
@@ -256,6 +264,7 @@ export class Game {
     this.setupWorld();
     this.setupNPCs();
     this.setupClickMarker();
+    this.setupWhirlwind();
     this.bindInput();
     this.cacheHud();
     this.buildCharSelect();
@@ -478,6 +487,41 @@ export class Game {
     this.clickMarker.position.y = 0.04;
     this.clickMarker.visible = false;
     this.scene.add(this.clickMarker);
+  }
+
+  /** Diablo-style whirlwind swirl: 3 stacked orbital flame bands + fire light. Built once, faded in/out per spin. */
+  private setupWhirlwind(): void {
+    const g = new THREE.Group();
+    const defs = [
+      { r: 2.2, tube: 0.3, arc: Math.PI * 1.5, color: 0xff5a00, y: 0.55, opacity: 0.8 },
+      { r: 1.75, tube: 0.24, arc: Math.PI * 1.2, color: 0xff9a2e, y: 1.0, opacity: 0.9 },
+      { r: 1.3, tube: 0.18, arc: Math.PI, color: 0xffd76a, y: 1.45, opacity: 0.95 },
+    ];
+    for (const d of defs) {
+      const mesh = new THREE.Mesh(
+        new THREE.TorusGeometry(d.r, d.tube, 10, 42, d.arc),
+        new THREE.MeshBasicMaterial({
+          color: d.color,
+          transparent: true,
+          opacity: 0,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      );
+      mesh.rotation.x = -Math.PI / 2;
+      mesh.rotation.z = Math.random() * Math.PI * 2;
+      mesh.position.y = d.y;
+      mesh.userData.baseOpacity = d.opacity;
+      mesh.visible = true;
+      g.add(mesh);
+      this.whirlBands.push(mesh);
+    }
+    this.whirlLight = new THREE.PointLight(0xff8a2e, 0, 10, 2);
+    this.whirlLight.position.y = 1.5;
+    g.add(this.whirlLight);
+    g.visible = false;
+    this.scene.add(g);
+    this.whirlFx = g;
   }
 
   private cacheHud(): void {
@@ -1618,12 +1662,19 @@ export class Game {
         break;
       }
       case 'whirlwind': {
-        this.whirlTimer = 0.4;
+        // Channeled spin: 1.2s, free steering, 1.0x damage each 0.4s spin (3 spins).
+        this.whirlTimer = 1.2;
+        this.whirlTick = 0.4;
+        this.whirlDmg = dmg;
+        this.player.clearAttackTarget();
         this.player.swingAnim = 1;
         this.sound.swing();
-        this.showMarker(this.player.position, 0xffd21f);
-        this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 4);
-        this.hitAllInRadius(this.player.position, 4, dmg * 1.8, 0, 0xffd21f);
+        this.showMarker(this.player.position, 0xff7b1f);
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xff7b1f, 4);
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xfff6d8, 2.5, 0.35);
+        this.effects.burst(this.player.position.x, 0.6, this.player.position.z, { color: 0xff7b1f, count: 14, speed: 6, life: 0.5, size: 1.1 });
+        this.camShake = Math.min(0.6, this.camShake + 0.22);
+        this.hitAllInRadius(this.player.position, 4, dmg * 1.0, 0, 0xffd21f);
         break;
       }
       case 'shadowstrike': {
@@ -2462,11 +2513,36 @@ export class Game {
       }
     }
 
-    // Whirlwind spin visual + trailing sparks
+    // Whirlwind: orbital flame swirl follows the player (steering stays free —
+    // player.update ran above), each 0.4s spin deals damage at the current position.
+    if (this.whirlTimer > 0 || this.whirlFade > 0) {
+      const target = this.whirlTimer > 0 ? 1 : 0;
+      this.whirlFade = THREE.MathUtils.clamp(this.whirlFade + Math.sign(target - this.whirlFade) * dt * 5, 0, 1);
+      this.whirlFx.visible = this.whirlFade > 0.01;
+      this.whirlFx.position.set(this.player.position.x, 0, this.player.position.z);
+      this.whirlFx.rotation.y += dt * 11;
+      for (let i = 0; i < this.whirlBands.length; i++) {
+        const band = this.whirlBands[i];
+        band.rotation.z += dt * (i % 2 === 0 ? 2.5 : -2);
+        band.material.opacity = (band.userData.baseOpacity as number) * this.whirlFade;
+      }
+      this.whirlLight.intensity = (34 + Math.sin(performance.now() * 0.045) * 10) * this.whirlFade;
+    }
     if (this.whirlTimer > 0) {
       this.whirlTimer -= dt;
-      this.player.group.rotation.y += dt * 18;
-      this.effects.burst(this.player.position.x, 1.1, this.player.position.z, { color: 0xffd21f, count: 2, speed: 5, life: 0.35, size: 0.9 });
+      this.player.group.rotation.y += dt * 12;
+      this.effects.burst(this.player.position.x, 1.1, this.player.position.z, { color: 0xff7b1f, count: 3, speed: 5, life: 0.35, size: 1 });
+      this.effects.burst(this.player.position.x, 1.1, this.player.position.z, { color: 0xfff6d8, count: 1, speed: 3, life: 0.3, size: 0.7 });
+      this.whirlTick -= dt;
+      if (this.whirlTick <= 0 && this.whirlTimer > 0) {
+        this.whirlTick += 0.4;
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xff7b1f, 4, 0.35);
+        this.effects.ring(this.player.position.x, this.player.position.z, 0xfff6d8, 2.5, 0.3);
+        this.effects.burst(this.player.position.x, 0.3, this.player.position.z, { color: 0xd6c98a, count: 8, speed: 3, life: 0.6, size: 1.3 });
+        this.camShake = Math.min(0.6, this.camShake + 0.12);
+        this.hitAllInRadius(this.player.position, 4, this.whirlDmg * 1.0, 0, 0xff7b1f);
+      }
+      if (this.whirlTimer <= 0) this.whirlTick = 0;
     }
 
     // Monsters + incoming damage
