@@ -77,6 +77,8 @@ export class Player {
   alive = true;
   attackTarget: Attackable | null = null;
   swingAnim = 0;
+  /** While true, locomotion never touches facing (whirlwind owns rotation). */
+  spinLock = false;
   /** Dodge dash state (i-frames while dodgeTimer > 0). */
   dodgeTimer = 0;
   dodgeCd = 0;
@@ -586,7 +588,9 @@ export class Player {
     this.group.position.y = 0;
 
     const targetYaw = Math.atan2(move.x, move.z);
-    this.group.rotation.y = lerpAngle(this.group.rotation.y, targetYaw, 1 - Math.exp(-12 * dt));
+    if (!this.spinLock) {
+      this.group.rotation.y = lerpAngle(this.group.rotation.y, targetYaw, 1 - Math.exp(-12 * dt));
+    }
 
     this.walkTime += dt * 10;
     if (!this.modelRoot) {

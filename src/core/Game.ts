@@ -165,6 +165,9 @@ export class Game {
   private whirlBands: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>[] = [];
   private whirlLight!: THREE.PointLight;
   private whirlFade = 0;
+  /** Twin blade glows parented to the player — spin with the body so rotation reads. */
+  private whirlBlades!: THREE.Group;
+  private whirlBladeMats: THREE.MeshBasicMaterial[] = [];
   private sanctumHintShown = false;
   private deathTimer = 0;
   private camShake = 0;
@@ -522,6 +525,26 @@ export class Game {
     g.visible = false;
     this.scene.add(g);
     this.whirlFx = g;
+
+    // Twin blade glows parented to the player body: they inherit the spin, so
+    // the rotation reads even on a near-symmetric body. Span ≈ damage radius.
+    const blades = new THREE.Group();
+    for (const side of [-1, 1]) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: side < 0 ? 0xffd76a : 0xff7b1f,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const blade = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.14, 0.14), mat);
+      blade.position.set(side * 1.25, 1.1, 0);
+      blades.add(blade);
+      this.whirlBladeMats.push(mat);
+    }
+    blades.visible = false;
+    this.player.group.add(blades);
+    this.whirlBlades = blades;
   }
 
   private cacheHud(): void {
@@ -2517,8 +2540,10 @@ export class Game {
     // player.update ran above), each 0.4s spin deals damage at the current position.
     if (this.whirlTimer > 0 || this.whirlFade > 0) {
       const target = this.whirlTimer > 0 ? 1 : 0;
+      this.player.spinLock = this.whirlTimer > 0;
       this.whirlFade = THREE.MathUtils.clamp(this.whirlFade + Math.sign(target - this.whirlFade) * dt * 5, 0, 1);
       this.whirlFx.visible = this.whirlFade > 0.01;
+      this.whirlBlades.visible = this.whirlFade > 0.01;
       this.whirlFx.position.set(this.player.position.x, 0, this.player.position.z);
       this.whirlFx.rotation.y += dt * 11;
       for (let i = 0; i < this.whirlBands.length; i++) {
@@ -2526,6 +2551,7 @@ export class Game {
         band.rotation.z += dt * (i % 2 === 0 ? 2.5 : -2);
         band.material.opacity = (band.userData.baseOpacity as number) * this.whirlFade;
       }
+      for (const m of this.whirlBladeMats) m.opacity = 0.9 * this.whirlFade;
       this.whirlLight.intensity = (34 + Math.sin(performance.now() * 0.045) * 10) * this.whirlFade;
     }
     if (this.whirlTimer > 0) {
