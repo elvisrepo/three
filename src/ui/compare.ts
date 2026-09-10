@@ -1,10 +1,15 @@
 /** Compare tooltip + item tooltip HTML builders (pure — no DOM, no game state). */
 
 import { affixLabel, itemStats, sellPrice, RARITY_COLOR, type ItemInstance } from '../items/Items';
+import { isRiftKey, keyTier, riftTier } from '../data/Rifts';
 
 /** `title` text for hover tooltips (plain text, newlines). */
 export function itemTooltip(it: ItemInstance): string {
   if (it.kind === 'consumable') {
+    if (isRiftKey(it.baseId)) {
+      const t = riftTier(keyTier(it.baseId));
+      return `${it.icon} ${it.name}\nClick: open a Tier ${t.tier} rift (Lv${t.minLevel}+, consumed on use)\n${t.desc}\nSell: ${sellPrice(it)}g`;
+    }
     return `${it.icon} ${it.name}\nClick: teleport to Haven (consumed on use)\nSell: ${sellPrice(it)}g`;
   }
   const lines = [
@@ -20,6 +25,13 @@ export function itemTooltip(it: ItemInstance): string {
 /** Full compare-panel innerHTML for `item` vs equipped (null = nothing equipped). */
 export function compareHtml(item: ItemInstance, equipped: ItemInstance | null, playerLevel: number): string {
   if (item.kind === 'consumable') {
+    if (isRiftKey(item.baseId)) {
+      const t = riftTier(keyTier(item.baseId));
+      return (
+        `<b>${item.icon} ${item.name}</b>` +
+        `<div class="dim">Click in bag: open a Tier ${t.tier} rift (Lv${t.minLevel}+).<br>${t.desc}<br>Consumed on use · sells for ${sellPrice(item)}g.</div>`
+      );
+    }
     return (
       `<b>${item.icon} ${item.name}</b>` +
       `<div class="dim">Click in bag: teleport to Haven.<br>Consumed on use · sells for ${sellPrice(item)}g.</div>`

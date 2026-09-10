@@ -94,6 +94,24 @@ export const QUESTS: QuestDef[] = [
     kind: 'boss', zoneId: 'wilds', boss: 'The Hornfather',
     reward: { gold: 2500, xp: 3000, itemLevel: 35 },
   },
+  {
+    id: 'rift_t1', name: 'Rift Echo I', icon: '🌀',
+    desc: 'Slay the Cinder Tyrant echo in a Tier 1 rift. (Keys drop in the Wilds.)',
+    kind: 'boss', zoneId: 'rift', boss: 'Cinder Tyrant',
+    reward: { gold: 2000, xp: 2500, itemLevel: 38 },
+  },
+  {
+    id: 'rift_t2', name: 'Rift Echo II', icon: '🌪️',
+    desc: 'Slay the Hornfather echo in a Tier 2 rift.',
+    kind: 'boss', zoneId: 'rift', boss: 'The Hornfather',
+    reward: { gold: 3000, xp: 4000, itemLevel: 41 },
+  },
+  {
+    id: 'rift_t3', name: 'Rift Echo III', icon: '🔥',
+    desc: 'Slay the Empowered Hornfather in a Tier 3 rift.',
+    kind: 'boss', zoneId: 'rift', boss: 'Empowered Hornfather',
+    reward: { gold: 5000, xp: 6000, itemLevel: 44 },
+  },
 ];
 
 export function questById(id: string): QuestDef | null {

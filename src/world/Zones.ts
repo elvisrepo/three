@@ -177,6 +177,34 @@ export const ZONES: ZoneDef[] = [
       { x: 6, z: -14, radius: 3.2, damage: 150, pct: 0.18, period: 4.4, warn: 1.0, color: 0xb44dff },
     ],
   },
+  {
+    // Endgame rift arena: monster/boss levels come from the active RiftTier
+    // (Game.riftRun), not this def. Hidden from the portal list — keys only.
+    id: 'rift',
+    name: 'Rift',
+    sub: 'Rift Key required',
+    minLevel: 35,
+    groundColor: 0x1c1030,
+    fogColor: 0x0a0616,
+    wallColor: 0x2c1a4d,
+    monsterTint: 0xb44dff,
+    monsterSpecies: 'goblin',
+    monsters: { count: 12, levelMin: 35, levelMax: 37 },
+    boss: { name: 'Rift Echo', level: 38 },
+    hasShop: false,
+    hasPortal: false,
+    spawn: [0, 18],
+    shopPos: [0, 0],
+    portalPos: [0, 0],
+    bossPos: [0, -18],
+    sanctumPos: [0, 0],
+    chestPos: [0, 0],
+    fountainPos: [0, 0],
+    hazards: [
+      { x: -5, z: -10, radius: 3.0, damage: 150, pct: 0.16, period: 4.0, warn: 1.0, color: 0xb44dff },
+      { x: 5, z: -10, radius: 3.0, damage: 150, pct: 0.16, period: 4.6, warn: 1.0, color: 0xb44dff },
+    ],
+  },
 ];
 
 export function zoneById(id: string): ZoneDef {

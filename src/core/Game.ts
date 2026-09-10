@@ -36,6 +36,7 @@ import { StateMachine, GameState } from './StateMachine';
 import { compareHtml } from '../ui/compare';
 import { QUESTS, isComplete, blankProgress, rewardText, type QuestDef, type QuestProgress } from '../data/Quests';
 import { ELITE_XP_MULT, ELITE_SCALE, rollElite, type EliteRoll } from '../data/Elites';
+import { RIFT_TIERS, isRiftKey, keyTier, keyTierForLevel, makeRiftKey, riftTier, type RiftTier } from '../data/Rifts';
 import { questLogHtml, questTrackerHtml, type QuestEntry } from '../ui/quests';
 import { gearStatsText, equipRowHtml, invGridHtml } from '../ui/inventory';
 import { shopStockHtml } from '../ui/shop';
@@ -141,6 +142,8 @@ export class Game {
   private bossCtrls: BossController[] = [];
   /** Elite (champion) trash — same objects as monsters, upgraded at spawn. Cleared on loadZone. */
   private elites = new Set<Monster>();
+  /** Active rift run (fixed tier). Null = not in a rift / relogin fallback to T1. */
+  private riftRun: RiftTier | null = null;
   private pendingAoe: PendingAoe[] = [];
   /** Per-hazard countdowns for the current zone (rebuilt on loadZone). */
   private hazardTimers: number[] = [];
@@ -1253,6 +1256,7 @@ export class Game {
     this.monsters = [];
     this.bossCtrls = [];
     this.elites.clear();
+    if (def.id !== 'rift') this.riftRun = null;
     this.loot.clear();
     this.pickupUid = null;
     this.player.clearAttackTarget();
@@ -1320,6 +1324,10 @@ export class Game {
 
   private spawnZoneMonsters(def: ZoneDef): void {
     if (!def.monsters) return;
+    if (def.id === 'rift') {
+      this.spawnRiftMonsters(def);
+      return;
+    }
     const [sx, sz] = def.spawn;
     let eliteCount = 0;
     const trash: Monster[] = [];
@@ -1379,8 +1387,50 @@ export class Game {
     this.elites.add(m);
   }
 
+  /** Active rift tier, defaulting to T1 (relogin edge: zone saved, run not). */
+  private riftTier(): RiftTier {
+    return this.riftRun ?? RIFT_TIERS[0];
+  }
+
+  /** Rift trash: tier levels/count, tier elite chance, tier global mults. */
+  private spawnRiftMonsters(def: ZoneDef): void {
+    const tier = this.riftTier();
+    if (!this.riftRun) this.showToast('The rift echo fades — Tier 1 remnant.', 2.5);
+    const [sx, sz] = def.spawn;
+    for (let i = 0; i < tier.monsterCount; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 9 + Math.random() * 15;
+      let x = THREE.MathUtils.clamp(sx + Math.cos(a) * r, -27, 27);
+      let z = THREE.MathUtils.clamp(sz + Math.sin(a) * r, -27, 27);
+      const dx = x - sx;
+      const dz = z - sz;
+      if (dx * dx + dz * dz < 36) {
+        x = THREE.MathUtils.clamp(x + 9, -27, 27);
+        z = THREE.MathUtils.clamp(z + 9, -27, 27);
+      }
+      const level = randi(tier.monsterMin, tier.monsterMax);
+      const elite = Math.random() < tier.eliteChance ? rollElite(level, true) : null;
+      const m = new Monster(new THREE.Vector3(x, 0, z), level, {
+        tint: def.monsterTint,
+        species: def.monsterSpecies,
+        hpMult: (elite?.hpMult ?? 1) * tier.hpMult,
+        dmgMult: (elite?.dmgMult ?? 1) * tier.dmgMult,
+        xpMult: elite ? ELITE_XP_MULT : 1,
+        name: elite ? `Elite ${elite.titles.join(' ')}` : undefined,
+      });
+      if (elite) this.applyElite(m, elite);
+      m.group.userData.monster = m;
+      this.monsters.push(m);
+      this.scene.add(m.group);
+    }
+  }
+
   private spawnBoss(def: ZoneDef): void {
     if (!def.boss) return;
+    if (def.id === 'rift') {
+      this.spawnRiftBoss(def);
+      return;
+    }
     const tint = def.id === 'crypt' ? 0x7b2ff7 : def.id === 'ember' ? 0xff5a1f : def.id === 'wilds' ? 0x7b5cff : 0xb81f2d;
     const boss = new Monster(new THREE.Vector3(def.bossPos[0], 0, def.bossPos[1]), def.boss.level, {
       hpMult: 6,
@@ -1403,6 +1453,34 @@ export class Game {
       portals: def.id === 'wilds',
       skyFx: def.id === 'wilds' ? this.meteorFx : null,
       slam: def.id !== 'wilds',
+    }));
+  }
+
+  /** Rift boss: tier re-fight with tier global mults (farmable, 30s respawn). */
+  private spawnRiftBoss(def: ZoneDef): void {
+    const tier = this.riftTier();
+    const b = tier.boss;
+    const boss = new Monster(new THREE.Vector3(def.bossPos[0], 0, def.bossPos[1]), b.level, {
+      hpMult: 6 * tier.hpMult,
+      dmgMult: 1.4 * tier.dmgMult,
+      xpMult: 12,
+      scale: 1.7,
+      tint: 0xb44dff,
+      name: b.name,
+      isBoss: true,
+      aggro: 16,
+      respawnDelay: 30,
+      model: b.model,
+    });
+    boss.attackRange = 3.4;
+    boss.group.userData.monster = boss;
+    this.monsters.push(boss);
+    this.scene.add(boss.group);
+    this.bossCtrls.push(new BossController(this.scene, boss, {
+      magma: b.magma,
+      portals: b.portals,
+      skyFx: b.sky ? this.meteorFx : null,
+      slam: b.slam ?? true,
     }));
   }
 
@@ -2426,28 +2504,40 @@ export class Game {
     this.inventory.gold += gold;
     this.numbers.spawn(m.position, `+${gold}g`, { color: '#ffd479', scale: 1.1 });
 
+    // Rift luck loads every drop while inside (0 outside).
+    const riftLuck = this.currentZoneId === 'rift' ? this.riftTier().luck : 0;
     if (m.isBoss) {
       // Guaranteed drop, minimum magic quality.
       const r = Math.random();
       const force = r < 0.06 ? 'legendary' : r < 0.4 ? 'rare' : 'magic';
-      this.loot.spawnItem(m.position, generateDrop(this.player.level, 6, force));
-      if (Math.random() < 0.5) this.loot.spawnItem(m.position, generateDrop(this.player.level));
+      this.loot.spawnItem(m.position, generateDrop(this.player.level, 6 + riftLuck, force));
+      if (Math.random() < 0.5) this.loot.spawnItem(m.position, generateDrop(this.player.level, riftLuck));
       this.loot.spawnItem(m.position, makeTpScroll());
       this.loot.spawnItem(m.position, makeTpScroll());
       this.showToast(`👑 ${m.displayName || 'Boss'} slain! Guaranteed loot — grab the crystals!`, 3.2);
+      if (this.currentZoneId === 'rift') {
+        this.showToast('🌀 Rift cleared! Press T (Town Portal scroll) to leave with your loot.', 4);
+      }
       this.logTelemetry('bossKill', this.currentZoneId, this.playtime - this.zoneEnterPlaytime);
+      this.dropRiftKey(m);
     } else if (this.elites.has(m)) {
       // Elite: guaranteed min-magic drop + bonus gold, boss-lite dopamine.
       const r = Math.random();
       const force = r < 0.05 ? 'legendary' : r < 0.28 ? 'rare' : 'magic';
-      this.loot.spawnItem(m.position, generateDrop(this.player.level, 0, force));
-      if (Math.random() < 0.25) this.loot.spawnItem(m.position, generateDrop(this.player.level));
+      this.loot.spawnItem(m.position, generateDrop(this.player.level, riftLuck, force));
+      if (Math.random() < 0.25) this.loot.spawnItem(m.position, generateDrop(this.player.level, riftLuck));
       const bonus = randi(6, 12) + m.level * 2;
       this.inventory.gold += bonus;
       this.numbers.spawn(m.position, `+${bonus}g`, { color: '#ffd479', scale: 1.1 });
       this.showToast(`⚔️ ${m.displayName || 'Elite'} slain — bonus loot!`, 2.4);
+      // Wilds elites seed the endgame: 12% Rift Key (tier fits your level).
+      if (this.currentZoneId === 'wilds' && Math.random() < 0.12) {
+        const key = makeRiftKey(keyTierForLevel(this.player.level));
+        this.loot.spawnItem(m.position, key);
+        this.showToast(`🌀 ${key.name} — click it in your bag to open the rift!`, 3);
+      }
     } else {
-      if (Math.random() < 0.09) this.loot.spawnItem(m.position, generateDrop(this.player.level));
+      if (Math.random() < 0.09) this.loot.spawnItem(m.position, generateDrop(this.player.level, riftLuck));
       if (Math.random() < 0.05) this.loot.spawnItem(m.position, makeTpScroll());
     }
 
@@ -2457,6 +2547,22 @@ export class Game {
     this.updateBossBar();
     this.renderInventory();
     this.autosave();
+  }
+
+  /** Rift Key economy: Hornfather always seeds your next run; rift echoes
+   *  sustain the loop (~1 in 3, usually same tier, 25% one tier up). */
+  private dropRiftKey(m: Monster): void {
+    if (this.currentZoneId === 'wilds') {
+      const key = makeRiftKey(keyTierForLevel(this.player.level));
+      this.loot.spawnItem(m.position, key);
+      this.showToast(`🌀 ${key.name} — click it in your bag to open the rift!`, 3);
+    } else if (this.currentZoneId === 'rift' && Math.random() < 1 / 3) {
+      const tier = this.riftTier();
+      const next = Math.min(tier.tier + (Math.random() < 0.25 ? 1 : 0), RIFT_TIERS.length);
+      const key = makeRiftKey(next);
+      this.loot.spawnItem(m.position, key);
+      this.showToast(`🌀 ${key.name} — the loop continues!`, 3);
+    }
   }
 
   /** Level-up fanfare + unlock checks (kill XP and quest XP share this path). */
@@ -2803,6 +2909,11 @@ export class Game {
   private useScroll(uid: string): void {
     const it = this.inventory.find(uid);
     if (!it || it.kind !== 'consumable') return;
+    // Rift Keys open endgame runs instead of teleporting.
+    if (isRiftKey(it.baseId)) {
+      this.enterRift(uid);
+      return;
+    }
     if (!this.player.alive || this.tpBusy) return;
     if (this.currentZoneId === 'city') {
       this.showToast('Already in Haven — no need for a scroll.');
@@ -2824,10 +2935,41 @@ export class Game {
     }, 300);
   }
 
+  /** Consume a Rift Key from the bag and open that fixed-tier run. */
+  private enterRift(uid: string): void {
+    const it = this.inventory.find(uid);
+    if (!it || it.kind !== 'consumable' || !isRiftKey(it.baseId)) return;
+    if (!this.player.alive || this.tpBusy) return;
+    const tier = riftTier(keyTier(it.baseId));
+    if (this.player.level < tier.minLevel) {
+      this.showToast(`🔒 ${tier.keyName} requires Lv${tier.minLevel}. (You: ${this.player.level})`);
+      return;
+    }
+    if (this.currentZoneId === 'rift') {
+      this.showToast('Already inside a rift — finish this echo first!');
+      return;
+    }
+    this.tpBusy = true;
+    this.inventory.remove(uid);
+    this.hideCompare();
+    this.renderInventory();
+    this.sound.scroll();
+    this.riftRun = tier;
+    if (this.elFade) this.elFade.style.opacity = '1';
+    window.setTimeout(() => {
+      this.tpBusy = false;
+      this.loadZone('rift');
+      this.snapCamera();
+      if (this.elFade) this.elFade.style.opacity = '0';
+      this.sound.portal();
+      this.showToast(`🌀 Rift Tier ${tier.tier} — ${tier.desc}! Slay the boss, then T to leave.`, 3.5);
+    }, 300);
+  }
+
   /** T hotkey: burn one TP scroll from the bag, if any. */
   private useScrollKey(): void {
     if (!this.started || !this.player.alive || this.tpBusy) return;
-    const scroll = this.inventory.slots.find((s) => s?.kind === 'consumable');
+    const scroll = this.inventory.slots.find((s) => s?.kind === 'consumable' && s.baseId === 'tp_scroll');
     if (!scroll) {
       this.showToast('No Town Portal scrolls — the Trader sells them (20g).');
       return;
@@ -2878,7 +3020,7 @@ export class Game {
   private renderPortal(): void {
     if (this.elPortalPanel) this.elPortalPanel.style.display = this.portalOpen ? 'block' : 'none';
     if (!this.portalOpen || !this.elPortalList) return;
-    this.elPortalList.innerHTML = portalListHtml(ZONES, this.player.level, this.currentZoneId);
+    this.elPortalList.innerHTML = portalListHtml(ZONES.filter((z) => z.id !== 'rift'), this.player.level, this.currentZoneId);
   }
 
   private buyStock(uid: string): void {
@@ -2961,6 +3103,10 @@ export class Game {
   }
 
   private travelTo(id: string): void {
+    if (id === 'rift') {
+      this.showToast('Rifts open with a Rift Key — click one in your bag.');
+      return;
+    }
     const def = zoneById(id);
     if (this.player.level < def.minLevel) {
       this.showToast(`🔒 ${def.name} requires Lv${def.minLevel}. (You: ${this.player.level})`);
