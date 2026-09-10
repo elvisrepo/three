@@ -7,6 +7,8 @@ import { SoundManager } from '../audio/Sound';
 import { Effects } from '../entities/Effects';
 import { SavePointEffect, getPillarTexture, getCircleTexture, getMoteTexture } from '../entities/SavePoint';
 import { ChargeUp, MuzzleFlash } from '../entities/ChargeCast';
+import { MeteorFx } from '../entities/MeteorQuarks';
+import type { ParticleSystem as QuarksSystem } from 'three.quarks';
 import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
@@ -110,6 +112,9 @@ interface PendingAoe {
   scorch: boolean;
   sfx: string | null;
   mesh: THREE.Mesh;
+  /** quarks pilot: meteor streak column handle + impact flag (fire only). */
+  meteor: boolean;
+  qFall: QuarksSystem | null;
 }
 
 export class Game {
@@ -139,6 +144,8 @@ export class Game {
   private chargeCursor = 0;
   private muzzles: MuzzleFlash[] = [];
   private muzzleCursor = 0;
+  /** quarks pilot: meteor fall + impact systems (fire AoE only). */
+  private meteorFx!: MeteorFx;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -378,6 +385,7 @@ export class Game {
     this.projectiles = new ProjectilePool(this.scene, 24);
     for (let i = 0; i < 2; i++) this.chargeUps.push(new ChargeUp(this.scene));
     for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
+    this.meteorFx = new MeteorFx(this.scene);
     this.loot = new LootManager(this.scene);
     this.stash.fromJSON(loadSharedStash(), 0);
   }
@@ -1213,6 +1221,7 @@ export class Game {
       (a.mesh.material as THREE.Material).dispose();
     }
     this.pendingAoe = [];
+    this.meteorFx.stopAll();
     this.monsters = [];
     this.bossCtrls = [];
     this.loot.clear();
@@ -2021,7 +2030,8 @@ export class Game {
       case 'meteor': {
         const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
         if (!aim) return;
-        this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true });
+        const m = this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true, meteor: true });
+        m.qFall = this.meteorFx.startFall(aim.x, aim.z);
         this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 0.7);
         this.player.swingAnim = 1;
         this.sound.fireball();
@@ -2112,7 +2122,8 @@ export class Game {
         if (!aim) return;
         const spots: Array<[number, number, number]> = [[aim.x, aim.z, 0.4], [aim.x + 2.5, aim.z + 1, 0.8], [aim.x - 2.5, aim.z - 1, 1.2]];
         for (const [sx, sz, delay] of spots) {
-          this.queueAoe(sx, sz, 3.5, dmg * 3 * this.player.fireMult, 0, delay, 0xff6a00, { flash: '#ff8a2e', scorch: true, sfx: 'slam' });
+          const c = this.queueAoe(sx, sz, 3.5, dmg * 3 * this.player.fireMult, 0, delay, 0xff6a00, { flash: '#ff8a2e', scorch: true, sfx: 'slam', meteor: true });
+          c.qFall = this.meteorFx.startFall(sx, sz);
         }
         this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 1.2);
         this.player.swingAnim = 1;
@@ -2180,7 +2191,7 @@ export class Game {
     c.start(hx, 1.4, hz, color, dur, () => this.fireMuzzle(hx, 1.4, hz, color));
   }
 
-  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string }): void {
+  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string; meteor?: boolean }): PendingAoe {
     const mesh = new THREE.Mesh(
       new THREE.RingGeometry(Math.max(0.1, radius - 0.4), radius, 40),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
@@ -2188,7 +2199,9 @@ export class Game {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.05, z);
     this.scene.add(mesh);
-    this.pendingAoe.push({ x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh });
+    const entry: PendingAoe = { x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh, meteor: opts?.meteor ?? false, qFall: null };
+    this.pendingAoe.push(entry);
+    return entry;
   }
 
   private updatePendingAoe(dt: number): void {
@@ -2205,6 +2218,8 @@ export class Game {
       // Detonation: shockwave ring, fireball burst, optional scorch + screen flash
       this.effects.ring(a.x, a.z, a.color, a.radius, 0.5);
       this.effects.burst(a.x, 1.0, a.z, { color: a.color, count: 22, speed: 7, life: 0.6, size: 1.2 });
+      if (a.qFall) this.meteorFx.stopFall(a.qFall);
+      if (a.meteor) this.meteorFx.impact(a.x, a.z);
       if (a.scorch) this.effects.scorch(a.x, a.z, a.radius);
       if (a.flash) this.flashScreen(a.flash);
       if (a.sfx === 'slam') this.sound.bossSlam();
@@ -3039,6 +3054,7 @@ export class Game {
     this.loot.update(dt);
     this.numbers.update(dt);
     this.effects.update(dt);
+    this.meteorFx.update(dt);
     for (const c of this.chargeUps) c.update(dt);
     for (const m of this.muzzles) m.update(dt);
     this.portalAura.update(dt);
