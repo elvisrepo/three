@@ -1356,7 +1356,12 @@ export class Game {
     boss.group.userData.monster = boss;
     this.monsters.push(boss);
     this.scene.add(boss.group);
-    this.bossCtrls.push(new BossController(this.scene, boss, { magma: def.id === 'ember', portals: def.id === 'wilds' }));
+    this.bossCtrls.push(new BossController(this.scene, boss, {
+      magma: def.id === 'ember',
+      portals: def.id === 'wilds',
+      skyFx: def.id === 'wilds' ? this.meteorFx : null,
+      slam: def.id !== 'wilds',
+    }));
   }
 
   private spawnMinion(x: number, z: number, level: number): void {
@@ -3192,9 +3197,11 @@ export class Game {
         this.showToast('The boss calls for aid!', 2);
       }
       for (const im of b.consumePortalImpacts()) {
-        this.effects.ring(im.x, im.z, 0xb44dff, 2.2, 0.4);
-        this.effects.burst(im.x, 1.0, im.z, { color: 0xffffff, count: 10, speed: 5, life: 0.4, size: 0.9 });
-        this.effects.scorch(im.x, im.z, 2);
+        this.effects.ring(im.x, im.z, 0xb44dff, 2.2 * im.s, 0.4);
+        this.effects.ring(im.x, im.z, 0xffffff, 1.4 * im.s, 0.3);
+        this.effects.burst(im.x, 1.0, im.z, { color: 0xffffff, count: Math.round(16 * im.s), speed: 6, life: 0.45, size: 1.0 });
+        this.effects.burst(im.x, 0.6, im.z, { color: 0xb44dff, count: Math.round(12 * im.s), speed: 4, life: 0.6, size: 1.2 });
+        this.effects.scorch(im.x, im.z, 2 * im.sc);
       }
       const portalDmg = b.consumePortalDamage();
       if (portalDmg > 0 && this.player.alive) {
@@ -3203,6 +3210,15 @@ export class Game {
         this.flashScreen('#b44dff', 0.2, 0.3);
         this.sound.bossSlam();
         this.showToast('🔮 Portal beams! Keep moving!', 2);
+      }
+      if (b.consumeSkyFired()) this.showToast('☄️ The Hornfather takes flight — scatter!', 2.4);
+      const skyDmg = b.consumeSkyDamage();
+      if (skyDmg > 0 && this.player.alive) {
+        this.damagePlayer(skyDmg);
+        this.camShake = Math.min(0.9, this.camShake + 0.7);
+        this.flashScreen('#e0b3ff', 0.35, 0.5);
+        this.sound.bossSlam();
+        this.showToast('☄️ Skyfall! Out of the rings!', 2);
       }
     }
 

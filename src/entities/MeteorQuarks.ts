@@ -15,6 +15,7 @@ import {
   Gradient,
   Bezier,
   PiecewiseBezier,
+  GravityForce,
   Vector3 as QuarksVec3,
   Vector4 as QuarksVec4,
 } from 'three.quarks';
@@ -42,6 +43,22 @@ function fireGradient(): Gradient {
   );
 }
 
+function arcaneGradient(): Gradient {
+  return new Gradient(
+    [
+      [new QuarksVec3(1, 0.96, 1), 0],
+      [new QuarksVec3(0.72, 0.42, 1), 0.5],
+      [new QuarksVec3(0.32, 0.1, 0.62), 1],
+    ],
+    [
+      [1, 0],
+      [0.95, 0.3],
+      [0, 1],
+    ],
+  );
+}
+
+
 /** Full flipbook sweep 0 → frames-1 over particle life (tile blending on). */
 function fullSweep(frames: number): FrameOverLife {
   const last = frames - 1;
@@ -65,6 +82,9 @@ export class MeteorFx {
   private emberTemplate!: ParticleSystem;
   private smokeTemplate!: ParticleSystem;
   private live: LiveOneShot[] = [];
+  private skyBoltMat!: THREE.MeshBasicMaterial;
+  private skyChargeTemplate!: ParticleSystem;
+  private skyBoltTemplate!: ParticleSystem;
   /** Looping fall columns, keyed by handle for stopFall/stopAll. */
   private falls = new Set<ParticleSystem>();
   private addMat!: THREE.MeshBasicMaterial;
@@ -86,6 +106,12 @@ export class MeteorFx {
     });
     this.flipMat = new THREE.MeshBasicMaterial({
       map: fire.tex,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.skyBoltMat = new THREE.MeshBasicMaterial({
+      map: mote,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
@@ -122,9 +148,9 @@ export class MeteorFx {
       duration: 0.4,
       worldSpace: true,
       shape: new SphereEmitter({ radius: 0.6 }),
-      startLife: new ConstantValue(0.28),
+      startLife: new ConstantValue(0.32),
       startSpeed: new IntervalValue(1, 3),
-      startSize: new IntervalValue(2.2, 3.2),
+      startSize: new IntervalValue(3.0, 4.2),
       startColor: new ConstantColor(new QuarksVec4(1, 0.9, 0.7, 1)),
       emissionBursts: [{ time: 0, count: new ConstantValue(10), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
@@ -146,7 +172,7 @@ export class MeteorFx {
       startSpeed: new IntervalValue(5, 9),
       startSize: new IntervalValue(0.5, 0.9),
       startColor: new ConstantColor(new QuarksVec4(1, 0.5, 0.1, 1)),
-      emissionBursts: [{ time: 0, count: new ConstantValue(42), cycle: 1, interval: 0.01, probability: 1 }],
+      emissionBursts: [{ time: 0.05, count: new ConstantValue(42), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
       material: this.flipMat,
       renderOrder: 25,
@@ -169,7 +195,7 @@ export class MeteorFx {
       startSpeed: new IntervalValue(2, 5),
       startSize: new IntervalValue(0.12, 0.26),
       startColor: new ConstantColor(new QuarksVec4(1, 0.6, 0.2, 1)),
-      emissionBursts: [{ time: 0, count: new ConstantValue(26), cycle: 1, interval: 0.01, probability: 1 }],
+      emissionBursts: [{ time: 0.1, count: new ConstantValue(26), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
       material: this.flipMat,
       renderOrder: 25,
@@ -187,9 +213,9 @@ export class MeteorFx {
       shape: new SphereEmitter({ radius: 1.4 }),
       startLife: new IntervalValue(1.0, 1.6),
       startSpeed: new IntervalValue(1.5, 3),
-      startSize: new IntervalValue(0.9, 1.4),
-      startColor: new ConstantColor(new QuarksVec4(1, 1, 1, 0.9)),
-      emissionBursts: [{ time: 0, count: new ConstantValue(12), cycle: 1, interval: 0.01, probability: 1 }],
+      startSize: new IntervalValue(0.7, 1.1),
+      startColor: new ConstantColor(new QuarksVec4(0.62, 0.56, 0.72, 0.85)),
+      emissionBursts: [{ time: 0.3, count: new ConstantValue(8), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
       material: this.smokeMat,
       renderOrder: 23,
@@ -201,6 +227,63 @@ export class MeteorFx {
         new SizeOverLife(new PiecewiseBezier([[new Bezier(0.6, 1, 1.2, 1.4), 0]])),
       ],
     });
+
+    // Skyfall charge: violet motes imploding onto the crown (looping; the
+    // boss drives the emitter + gravity center every frame, see setGravity).
+    this.skyChargeTemplate = new ParticleSystem({
+      looping: true,
+      duration: 1,
+      worldSpace: true,
+      shape: new SphereEmitter({ radius: 3.4 }),
+      startLife: new IntervalValue(0.5, 0.8),
+      startSpeed: new ConstantValue(1.2),
+      startSize: new IntervalValue(0.14, 0.26),
+      startColor: new ConstantColor(new QuarksVec4(0.85, 0.65, 1, 1)),
+      emissionOverTime: new ConstantValue(70),
+      renderMode: RenderMode.BillBoard,
+      material: this.addMat,
+      renderOrder: 26,
+      behaviors: [
+        new GravityForce(new QuarksVec3(0, 0, 0), 60),
+        new ColorOverLife(fireGradient()),
+      ],
+    });
+
+    // Skyfall bolt: single heavy orb + ribbon trail, aimed by emitter quaternion.
+    this.skyBoltTemplate = new ParticleSystem({
+      looping: false,
+      duration: 2,
+      worldSpace: true,
+      shape: new ConeEmitter({ radius: 0.2, angle: 0.04 }),
+      startLife: new ConstantValue(1.0),
+      startSpeed: new ConstantValue(13),
+      startSize: new ConstantValue(1.25),
+      startColor: new ConstantColor(new QuarksVec4(1, 1, 1, 1)),
+      emissionBursts: [{ time: 0, count: new ConstantValue(1), cycle: 1, interval: 0.01, probability: 1 }],
+      renderMode: RenderMode.Trail,
+      rendererEmitterSettings: { startLength: new ConstantValue(4.2), followLocalOrigin: false },
+      material: this.skyBoltMat,
+      renderOrder: 26,
+      behaviors: [new ColorOverLife(arcaneGradient())],
+    });
+  }
+
+  /** Clone a template, attach it, and play — caller owns the handle. */
+  cloneSky(which: 'charge' | 'bolt'): ParticleSystem {
+    const s = (which === 'charge' ? this.skyChargeTemplate : this.skyBoltTemplate).clone();
+    this.attach(s);
+    s.play();
+    return s;
+  }
+
+  /** Steer a charge clone's implosion point (world space). */
+  setGravity(s: ParticleSystem, x: number, y: number, z: number): void {
+    for (const b of s.behaviors) {
+      if (b instanceof GravityForce) {
+        b.center.set(x, y, z);
+        return;
+      }
+    }
   }
 
   /** Looping streak column above (x, z). Caller stores the handle; stopFall ends it. */
@@ -257,12 +340,14 @@ export class MeteorFx {
     }
   }
 
-  private attach(s: ParticleSystem): void {
+  /** Attach a system to the scene + batch (shared with boss skills). */
+  attach(s: ParticleSystem): void {
     this.scene.add(s.emitter);
     this.batch.addSystem(s);
   }
 
-  private detach(s: ParticleSystem): void {
+  /** Remove a system from the batch + scene and free it. */
+  detach(s: ParticleSystem): void {
     this.batch.deleteSystem(s);
     s.emitter.parent?.remove(s.emitter);
     s.dispose();

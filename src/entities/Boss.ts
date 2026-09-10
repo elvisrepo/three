@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import type { Monster } from './Monster';
 import { MagmaAura } from './MagmaAura';
+import { ConstantValue } from 'three.quarks';
+import type { ParticleSystem } from 'three.quarks';
+import type { MeteorFx } from './MeteorQuarks';
 import { getMoteTexture, getCircleTexture, getPillarTexture } from './SavePoint';
 
 /**
@@ -10,6 +13,8 @@ import { getMoteTexture, getCircleTexture, getPillarTexture } from './SavePoint'
  * - summons 2 minions once at 50% HP (Game polls consumeSummon())
  * - portal barrage (Hornfather): 3 rifts warn 1.1s tracking you, then
  *   converging beams snapshot your spot (Game polls consumePortalDamage())
+ * - skyfall (Hornfather): elevates, implodes a quarks charge overhead, hurls
+ *   a ribbon-trailed orb (Game polls consumeSkyDamage/Fired/Impacts)
  * - 30s respawn for farmable boss loop
  */
 
@@ -62,6 +67,20 @@ const PORTAL_RANGE = 15;
 const PORTAL_BEAM_LIFE = 0.4;
 const PORTAL_BEAM_RADIUS = 1.4;
 const PORTAL_POP_LIFE = 0.18;
+
+const SKY_CD = 12;
+const SKY_RISE = 0.5;
+const SKY_CHARGE = 1.3;
+const SKY_ELEVATE = 4.2;
+const SKY_RANGE = 20;
+const SKY_BOLT_SPEED = 13;
+const SKY_RADIUS = 3;
+const SKY_DMG = 2.2;
+const SKY_FADE = 0.35;
+
+const _skyDir = new THREE.Vector3();
+const _skyHead = new THREE.Vector3();
+const _skyFwd = new THREE.Vector3(0, 0, 1);
 export class BossController {
   telegraph: THREE.Mesh;
   slamRadius = 4.8;
@@ -83,13 +102,30 @@ export class BossController {
   private portalT = 0;
   private portalCd = 6;
   private portalPending = 0;
+  private skyPending = 0;
   private fxT = 0;
-  private portalImpacts: Array<{ x: number; z: number }> = [];
+  private portalImpacts: Array<{ x: number; z: number; s: number; sc: number }> = [];
   private beams: PortalBeam[] = [];
+  /** Skyfall state (wilds boss only — enabled via opts.skyFx). */
+  private skyFx: MeteorFx | null = null;
+  private slamOn = true;
+  private skyPhase: 'idle' | 'rise' | 'charge' | 'fly' | 'fade' = 'idle';
+  private skyT = 0;
+  private skyCd = 8;
+  private skyCharge: ParticleSystem | null = null;
+  private skyBolt: ParticleSystem | null = null;
+  private skyTo = new THREE.Vector3();
+  private skyFired = false;
+  private skyCore!: THREE.Sprite;
+  private skyCoreMat!: THREE.SpriteMaterial;
+  /** Rider glow glued to the flying bolt + crown-pop timer. */
+  private skyGlow!: THREE.Sprite;
+  private skyGlowMat!: THREE.SpriteMaterial;
+  private skyPopT = 0;
   /** Shared beam-flow texture (scrolls globally; per-beam materials fade). */
   private beamTex: THREE.Texture | null = null;
 
-  constructor(private scene: THREE.Scene, readonly boss: Monster, opts?: { magma?: boolean; portals?: boolean }) {
+  constructor(private scene: THREE.Scene, readonly boss: Monster, opts?: { magma?: boolean; portals?: boolean; skyFx?: MeteorFx | null; slam?: boolean }) {
     this.telegraph = new THREE.Mesh(
       new THREE.RingGeometry(this.slamRadius - 0.55, this.slamRadius, 44),
       new THREE.MeshBasicMaterial({
@@ -113,6 +149,27 @@ export class BossController {
     }
     this.portalVolley = opts?.portals ?? false;
     if (this.portalVolley) this.buildPortalDress();
+    this.skyFx = opts?.skyFx ?? null;
+    this.slamOn = opts?.slam ?? true;
+    if (this.skyFx) {
+      this.skyCoreMat = new THREE.SpriteMaterial({
+        map: getMoteTexture(), color: 0xf2e6ff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      this.skyCore = new THREE.Sprite(this.skyCoreMat);
+      this.skyCore.renderOrder = 27;
+      this.skyCore.visible = false;
+      this.scene.add(this.skyCore);
+      this.skyGlowMat = new THREE.SpriteMaterial({
+        map: getMoteTexture(), color: 0xf2e6ff, transparent: true, opacity: 0,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      this.skyGlow = new THREE.Sprite(this.skyGlowMat);
+      this.skyGlow.scale.setScalar(3.2);
+      this.skyGlow.renderOrder = 28;
+      this.skyGlow.visible = false;
+      this.scene.add(this.skyGlow);
+    }
   }
 
   /** Pre-allocate all volley visuals once (zero allocation during the fight). */
@@ -196,7 +253,11 @@ export class BossController {
     this.portalCd = 6;
     this.portalT = 0;
     this.portalPending = 0;
+    this.skyPending = 0;
     this.portalImpacts = [];
+    this.skyCleanup();
+    this.skyPhase = 'idle';
+    this.skyCd = 6;
     this.volleyActive = false;
     this.hideDress();
     this.clearBeams();
@@ -217,6 +278,9 @@ export class BossController {
       if (this.aura) this.aura.group.visible = false;
       this.volleyActive = false;
       this.hideDress();
+      this.skyCleanup();
+      this.skyPhase = 'idle';
+      this.boss.group.position.y = 0;
       return 0;
     }
     if (!this.wasAlive && this.boss.alive) this.reset();
@@ -238,6 +302,7 @@ export class BossController {
     }
 
     const dist = this.boss.position.distanceTo(playerPos);
+    if (this.skyFx) this.updateSky(dt, playerPos, playerAlive, dist);
     const mat = this.telegraph.material as THREE.MeshBasicMaterial;
 
     if (this.warnT > 0) {
@@ -255,7 +320,7 @@ export class BossController {
     }
 
     this.slamCd -= dt;
-    if (this.slamCd <= 0 && playerAlive && dist < 10) {
+    if (this.slamOn && this.slamCd <= 0 && playerAlive && dist < 10) {
       this.warnT = 0.9;
       this.telegraph.visible = true;
       this.telegraph.position.set(this.boss.position.x, 0.06, this.boss.position.z);
@@ -405,7 +470,7 @@ export class BossController {
       if (dx * dx + dz * dz < PORTAL_BEAM_RADIUS * PORTAL_BEAM_RADIUS) {
         this.portalPending += Math.max(1, Math.round(this.boss.damage * 1.0));
       }
-      this.portalImpacts.push({ x: lock.x, z: lock.z });
+      this.portalImpacts.push({ x: lock.x, z: lock.z, s: 1, sc: 1 });
     }
     // Rifts collapse with a pop instead of blinking out.
     for (const r of this.rifts) {
@@ -427,7 +492,7 @@ export class BossController {
   }
 
   /** Drain impact points for Game-side detonation FX (rings, bursts, scorch). */
-  consumePortalImpacts(): Array<{ x: number; z: number }> {
+  consumePortalImpacts(): Array<{ x: number; z: number; s: number; sc: number }> {
     const out = this.portalImpacts;
     this.portalImpacts = [];
     return out;
@@ -503,6 +568,186 @@ export class BossController {
     this.beams = [];
   }
 
+  /** Crown hover point (world): boss feet + torso height. */
+  private skyHead(out: THREE.Vector3): THREE.Vector3 {
+    out.set(this.boss.position.x, this.boss.group.position.y + 2.8, this.boss.position.z);
+    return out;
+  }
+
+  /**
+   * Skyfall: rise → implode a quarks charge overhead → hurl a ribbon orb.
+   * The charge tracks the crown; the bolt flies to a snapshot; the blast
+   * banks damage + a scaled impact for Game-side FX.
+   */
+  private updateSky(dt: number, playerPos: THREE.Vector3, playerAlive: boolean, dist: number): void {
+    const fx = this.skyFx;
+    if (!fx) return;
+    switch (this.skyPhase) {
+      case 'idle': {
+        if (this.skyCd > 0) {
+          this.skyCd -= dt;
+          return;
+        }
+        if (!playerAlive || dist > SKY_RANGE) return;
+        if (this.volleyActive || this.warnT > 0) return;
+        this.skyPhase = 'rise';
+        this.skyT = SKY_RISE;
+        this.boss.playSpecial('slam');
+        return;
+      }
+      case 'rise': {
+        this.skyT -= dt;
+        const k = 1 - Math.max(0, this.skyT) / SKY_RISE;
+        const e = k * k * (3 - 2 * k);
+        this.boss.group.position.y = SKY_ELEVATE * e;
+        if (this.skyT <= 0) {
+          const head = this.skyHead(_skyHead);
+          this.skyCharge = fx.cloneSky('charge');
+          this.skyCharge.emitter.position.copy(head);
+          fx.setGravity(this.skyCharge, head.x, head.y, head.z);
+          this.skyCore.position.copy(head);
+          this.skyCore.scale.setScalar(0.4);
+          this.skyCoreMat.opacity = 0.4;
+          this.skyCore.visible = true;
+          this.skyPhase = 'charge';
+          this.skyT = SKY_CHARGE;
+          this.boss.playSpecial('slam');
+        }
+        return;
+      }
+      case 'charge': {
+        const head = this.skyHead(_skyHead);
+        if (this.skyCharge) {
+          this.skyCharge.emitter.position.copy(head);
+          fx.setGravity(this.skyCharge, head.x, head.y, head.z);
+        }
+        const k = 1 - Math.max(0, this.skyT) / SKY_CHARGE;
+        this.skyCore.position.copy(head);
+        this.skyCore.scale.setScalar(0.4 + k * 1.6);
+        this.skyCoreMat.opacity = 0.4 + k * 0.6;
+        this.skyT -= dt;
+        if (this.skyT <= 0) this.fireSky(playerPos);
+        return;
+      }
+      case 'fly': {
+        this.skyT -= dt;
+        if (this.skyBolt) {
+          this.skyGlow.position.copy(this.skyBolt.emitter.position);
+        }
+        if (this.skyPopT > 0) {
+          this.skyPopT -= dt;
+          if (this.skyPopT <= 0) this.skyCore.visible = false;
+        }
+        if (this.skyT <= 0) this.detonateSky(playerPos);
+        return;
+      }
+      case 'fade': {
+        this.skyT -= dt;
+        const y = this.boss.group.position.y;
+        this.boss.group.position.y = Math.max(0, y - dt * 14);
+        if (this.skyT <= 0) {
+          this.boss.group.position.y = 0;
+          this.skyPhase = 'idle';
+          this.skyCd = SKY_CD;
+        }
+        return;
+      }
+    }
+  }
+
+  /** Hurl the charged orb at a snapshot of the target. */
+  private fireSky(aim: THREE.Vector3): void {
+    const fx = this.skyFx;
+    if (!fx) {
+      this.skyPhase = 'fade';
+      this.skyT = SKY_FADE;
+      return;
+    }
+    const head = this.skyHead(_skyHead);
+    this.skyTo.set(aim.x, 0.9, aim.z);
+    _skyDir.copy(this.skyTo).sub(head);
+    const dist = _skyDir.length();
+    if (dist < 0.01) {
+      this.skyPhase = 'fade';
+      this.skyT = SKY_FADE;
+      return;
+    }
+    _skyDir.normalize();
+    const bolt = fx.cloneSky('bolt');
+    bolt.emitter.position.copy(head);
+    bolt.emitter.quaternion.setFromUnitVectors(_skyFwd, _skyDir);
+    bolt.startLife = new ConstantValue(dist / SKY_BOLT_SPEED + 0.05);
+    this.skyBolt = bolt;
+    if (this.skyCharge) {
+      fx.detach(this.skyCharge);
+      this.skyCharge = null;
+    }
+    this.skyCore.scale.setScalar(2.6);
+    this.skyCoreMat.opacity = 1;
+    this.skyPopT = 0.15;
+    this.skyGlow.visible = true;
+    this.skyGlowMat.opacity = 0.9;
+    this.skyFired = true;
+    this.skyPhase = 'fly';
+    this.skyT = dist / SKY_BOLT_SPEED;
+  }
+
+  /** Orb arrival: bank AoE damage + a scaled impact for Game-side FX. */
+  private detonateSky(playerPos: THREE.Vector3): void {
+    const fx = this.skyFx;
+    this.skyGlow.visible = false;
+    if (this.skyBolt && fx) {
+      this.skyBolt.endEmit();
+      fx.detach(this.skyBolt);
+      this.skyBolt = null;
+    }
+    const dx = playerPos.x - this.skyTo.x;
+    const dz = playerPos.z - this.skyTo.z;
+    if (dx * dx + dz * dz < SKY_RADIUS * SKY_RADIUS) {
+      this.skyPending += Math.max(1, Math.round(this.boss.damage * SKY_DMG));
+    }
+    this.portalImpacts.push({ x: this.skyTo.x, z: this.skyTo.z, s: 1.8, sc: 0.6 });
+    this.skyPhase = 'fade';
+    this.skyT = SKY_FADE;
+  }
+
+  /** Detach charge/bolt, drop the core, ground the boss (reset/death path). */
+  private skyCleanup(): void {
+    const fx = this.skyFx;
+    if (fx) {
+      if (this.skyCharge) {
+        fx.detach(this.skyCharge);
+        this.skyCharge = null;
+      }
+      if (this.skyBolt) {
+        fx.detach(this.skyBolt);
+        this.skyBolt = null;
+      }
+    } else {
+      this.skyCharge = null;
+      this.skyBolt = null;
+    }
+    if (this.skyCore) this.skyCore.visible = false;
+    if (this.skyGlow) this.skyGlow.visible = false;
+    this.boss.group.position.y = 0;
+  }
+
+  /** Drain banked skyfall damage (separate channel so toasts stay truthful). */
+  consumeSkyDamage(): number {
+    const d = this.skyPending;
+    this.skyPending = 0;
+    return d;
+  }
+
+  /** Announce flag for the Game-side "takes flight" toast (one per cast). */
+  consumeSkyFired(): boolean {
+    if (this.skyFired) {
+      this.skyFired = false;
+      return true;
+    }
+    return false;
+  }
+
   consumeSummon(): boolean {
     if (this.summonPending) {
       this.summonPending = false;
@@ -518,6 +763,14 @@ export class BossController {
     this.aura?.dispose();
     this.beamTex?.dispose();
     this.beamTex = null;
+    if (this.skyCore) {
+      this.scene.remove(this.skyCore);
+      this.skyCoreMat.dispose();
+    }
+    if (this.skyGlow) {
+      this.scene.remove(this.skyGlow);
+      this.skyGlowMat.dispose();
+    }
     for (const r of this.rifts) {
       this.scene.remove(r.group);
       r.group.traverse((o) => {
