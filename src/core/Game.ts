@@ -5,7 +5,7 @@ import { BossController } from '../entities/Boss';
 import { DamageNumbers } from '../entities/DamageNumbers';
 import { SoundManager } from '../audio/Sound';
 import { Effects } from '../entities/Effects';
-import { SavePointEffect } from '../entities/SavePoint';
+import { SavePointEffect, getPillarTexture, getCircleTexture, getMoteTexture } from '../entities/SavePoint';
 import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
@@ -202,6 +202,12 @@ export class Game {
   private whirlBands: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>[] = [];
   private whirlLight!: THREE.PointLight;
   private whirlFade = 0;
+  /** Save-point-style dress layers on the whirlwind: scrolling pillar + rune circle + embers. */
+  private whirlPillarMat!: THREE.MeshBasicMaterial;
+  private whirlPillarTex!: THREE.Texture;
+  private whirlCircle!: THREE.Mesh;
+  private whirlCircleMat!: THREE.MeshBasicMaterial;
+  private whirlMotes: { sprite: THREE.Sprite; mat: THREE.SpriteMaterial; angle: number; orbitR: number; life: number; maxLife: number; size: number; spin: number }[] = [];
   /** Twin blade glows parented to the player — spin with the body so rotation reads. */
   private whirlBlades!: THREE.Group;
   private whirlBladeMats: THREE.MeshBasicMaterial[] = [];
@@ -544,7 +550,8 @@ export class Game {
     this.scene.add(this.clickMarker);
   }
 
-  /** Diablo-style whirlwind swirl: 3 stacked orbital flame bands + fire light. Built once, faded in/out per spin. */
+  /** Diablo-style whirlwind: 3 stacked flame bands + save-point dress (scrolling
+   *  pillar, ground rune circle, rising embers) + fire light. Built once, faded per spin. */
   private setupWhirlwind(): void {
     const g = new THREE.Group();
     const defs = [
@@ -574,6 +581,67 @@ export class Game {
     this.whirlLight = new THREE.PointLight(0xff8a2e, 0, 10, 2);
     this.whirlLight.position.y = 1.5;
     g.add(this.whirlLight);
+
+    // Squat light pillar around the spinner (article §1, spin-sized: h 2.8).
+    this.whirlPillarTex = getPillarTexture().clone();
+    this.whirlPillarTex.needsUpdate = true;
+    this.whirlPillarTex.wrapS = this.whirlPillarTex.wrapT = THREE.RepeatWrapping;
+    this.whirlPillarMat = new THREE.MeshBasicMaterial({
+      map: this.whirlPillarTex,
+      color: 0xff7b1f,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.25, 2.8, 24, 1, true), this.whirlPillarMat);
+    pillar.position.y = 1.4;
+    pillar.renderOrder = 20;
+    g.add(pillar);
+
+    // Ground rune circle spinning under the feet (article finale).
+    this.whirlCircleMat = new THREE.MeshBasicMaterial({
+      map: getCircleTexture(),
+      color: 0xff9a2e,
+      transparent: true,
+      opacity: 0,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    this.whirlCircle = new THREE.Mesh(new THREE.PlaneGeometry(5.2, 5.2), this.whirlCircleMat);
+    this.whirlCircle.rotation.x = -Math.PI / 2;
+    this.whirlCircle.position.y = 0.05;
+    this.whirlCircle.renderOrder = 16;
+    g.add(this.whirlCircle);
+
+    // Rising ember motes, pooled (article §3, fast short loops for a 1.2s spin).
+    const moteTex = getMoteTexture();
+    for (let i = 0; i < 10; i++) {
+      const mat = new THREE.SpriteMaterial({
+        map: moteTex,
+        color: i % 2 === 0 ? 0xff7b1f : 0xffd76a,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.renderOrder = 22;
+      g.add(sprite);
+      const maxLife = 0.7 + Math.random() * 0.5;
+      this.whirlMotes.push({
+        sprite, mat,
+        angle: Math.random() * Math.PI * 2,
+        orbitR: 0.3 + Math.random() * 1.5,
+        life: Math.random() * maxLife,
+        maxLife,
+        size: 0.25 + Math.random() * 0.25,
+        spin: (Math.random() < 0.5 ? -1 : 1) * (2 + Math.random() * 2),
+      });
+    }
+
     g.visible = false;
     this.scene.add(g);
     this.whirlFx = g;
@@ -1139,6 +1207,14 @@ export class Game {
     this.pickupUid = null;
     this.player.clearAttackTarget();
     this.player.stop();
+    // Never carry a spin across a zone change (stale pose + stuck FX).
+    this.whirlTimer = 0;
+    this.whirlTick = 0;
+    this.whirlFade = 0;
+    this.player.spinLock = false;
+    this.player.spinPose = false;
+    this.whirlFx.visible = false;
+    this.whirlBlades.visible = false;
 
     this.scene.background = new THREE.Color(def.fogColor);
     (this.scene.fog as THREE.Fog).color.setHex(def.fogColor);
@@ -2776,6 +2852,7 @@ export class Game {
     if (this.whirlTimer > 0 || this.whirlFade > 0) {
       const target = this.whirlTimer > 0 ? 1 : 0;
       this.player.spinLock = this.whirlTimer > 0;
+      this.player.spinPose = this.whirlTimer > 0 && this.player.alive;
       this.whirlFade = THREE.MathUtils.clamp(this.whirlFade + Math.sign(target - this.whirlFade) * dt * 5, 0, 1);
       this.whirlFx.visible = this.whirlFade > 0.01;
       this.whirlBlades.visible = this.whirlFade > 0.01;
@@ -2788,6 +2865,28 @@ export class Game {
       }
       for (const m of this.whirlBladeMats) m.opacity = 0.9 * this.whirlFade;
       this.whirlLight.intensity = (34 + Math.sin(performance.now() * 0.045) * 10) * this.whirlFade;
+      // Save-point dress: fast scroll while spinning, slow settle while fading.
+      const spinning = this.whirlTimer > 0;
+      this.whirlPillarTex.offset.x += dt * (spinning ? 1.6 : 0.4);
+      this.whirlPillarMat.opacity = 0.5 * this.whirlFade;
+      this.whirlCircle.rotation.z += dt * (spinning ? 3.2 : 0.8);
+      this.whirlCircleMat.opacity = 0.6 * this.whirlFade;
+      for (const mo of this.whirlMotes) {
+        mo.life += dt;
+        if (mo.life >= mo.maxLife) {
+          mo.life = 0;
+          mo.angle = Math.random() * Math.PI * 2;
+          mo.orbitR = 0.3 + Math.random() * 1.5;
+          mo.maxLife = 0.7 + Math.random() * 0.5;
+        }
+        const k = mo.life / mo.maxLife;
+        mo.angle += dt * mo.spin;
+        mo.sprite.position.set(Math.cos(mo.angle) * mo.orbitR, 0.3 + k * 2.2, Math.sin(mo.angle) * mo.orbitR);
+        const fadeIn = Math.min(1, k / 0.2);
+        const fadeOut = Math.min(1, (1 - k) / 0.3);
+        mo.mat.opacity = Math.min(fadeIn, fadeOut) * this.whirlFade;
+        mo.sprite.scale.set(mo.size, mo.size, 1);
+      }
     }
     if (this.whirlTimer > 0) {
       this.whirlTimer -= dt;

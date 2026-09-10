@@ -80,6 +80,8 @@ export class Player {
   swingAnim = 0;
   /** While true, locomotion never touches facing (whirlwind owns rotation). */
   spinLock = false;
+  /** While true, arms are held out horizontally (whirlwind T-pose). Set by Game. */
+  spinPose = false;
   /** Visible weapon prop (axe first). Parented to the hand bone or body fallback. */
   private weaponAnchor = new THREE.Group();
   private weaponBaseId: string | null = null;
@@ -91,6 +93,9 @@ export class Player {
   private body: THREE.Mesh;
   private bodyMat: THREE.MeshStandardMaterial;
   private nose: THREE.Mesh;
+  /** Capsule-fallback spin arms (hidden unless whirlwinding without a model). */
+  private fallbackArmL: THREE.Mesh;
+  private fallbackArmR: THREE.Mesh;
   private target: THREE.Vector3 | null = null;
   private walkTime = 0;
   private stopDistance = 0.2;
@@ -107,7 +112,15 @@ export class Player {
   private modelMats: THREE.MeshStandardMaterial[] = [];
   private modelKey: string | null = null;
   private modelLoading = false;
-  private lastSwing = 0;
+  /** T-pose arm bones (model path): {bone, side} — side +1 = left (+X). */
+  private spinArmBones: { bone: THREE.Object3D; side: number }[] = [];
+  private spinArmsFor: THREE.Group | null = null;
+  private readonly spinQG = new THREE.Quaternion();
+  private readonly spinQW = new THREE.Quaternion();
+  private readonly spinQR = new THREE.Quaternion();
+  private readonly spinQP = new THREE.Quaternion();
+  private readonly spinDir = new THREE.Vector3();
+  private readonly spinTgt = new THREE.Vector3();  private lastSwing = 0;
   private lastHitAnimAt = -10;
   private elapsed = 0;
   private deathPlayed = false;
@@ -142,6 +155,21 @@ export class Player {
     // Hand prop anchor (body-space fallback until a hand bone is found).
     this.weaponAnchor.position.set(0.55, 1.1, 0.25);
     this.group.add(this.weaponAnchor);
+
+    // Spin-pose arms for the capsule body: horizontal bars at shoulder height,
+    // shown only while whirlwinding (the skinned model poses its real bones).
+    const armGeo = new THREE.CapsuleGeometry(0.13, 0.55, 4, 8);
+    this.fallbackArmL = new THREE.Mesh(armGeo, this.bodyMat);
+    this.fallbackArmL.position.set(0.62, 1.35, 0);
+    this.fallbackArmL.rotation.z = Math.PI / 2;
+    this.fallbackArmL.castShadow = true;
+    this.fallbackArmL.visible = false;
+    this.fallbackArmR = new THREE.Mesh(armGeo, this.bodyMat);
+    this.fallbackArmR.position.set(-0.62, 1.35, 0);
+    this.fallbackArmR.rotation.z = Math.PI / 2;
+    this.fallbackArmR.castShadow = true;
+    this.fallbackArmR.visible = false;
+    this.group.add(this.fallbackArmL, this.fallbackArmR);
 
     this.group.position.set(0, 0, 0);
   }
@@ -324,6 +352,54 @@ export class Player {
       this.weaponAnchor.add(axe);
     }
     this.mountWeaponAnchor();
+  }
+
+  /** Arm + forearm bones for the spin T-pose (Mixamo names, exact match). */
+  private resolveSpinArms(): void {
+    this.spinArmBones = [];
+    this.spinArmsFor = this.modelRoot;
+    if (!this.modelRoot) return;
+    const names = new Set<string>();
+    this.modelRoot.traverse((o) => {
+      names.add(o.name.toLowerCase());
+    });
+    const take = (suffix: string, side: number): void => {
+      const want = `mixamorig${suffix}`;
+      if (!names.has(want)) return;
+      let hit: THREE.Object3D | null = null;
+      this.modelRoot?.traverse((o) => {
+        if (!hit && o.name.toLowerCase() === want) hit = o;
+      });
+      if (hit) this.spinArmBones.push({ bone: hit, side });
+    };
+    take('leftarm', 1);
+    take('leftforearm', 1);
+    take('rightarm', -1);
+    take('rightforearm', -1);
+  }
+
+  /**
+   * Hold the arms out horizontally while spinning. Runs after mixer.update so
+   * the override wins over the locomotion clip; it aligns each limb's +Y axis
+   * (verified Mixamo bind direction) to the body's ±X via the shortest arc —
+   * no axis guessing, works from any animation pose. When spinPose clears we
+   * simply stop overriding and the clip resumes (nothing to restore).
+   */
+  private updateSpinArms(): void {
+    this.fallbackArmL.visible = this.fallbackArmR.visible = this.spinPose && !this.modelRoot;
+    if (!this.spinPose || !this.modelRoot) return;
+    if (this.spinArmsFor !== this.modelRoot) this.resolveSpinArms();
+    if (this.spinArmBones.length === 0) return;
+    this.group.getWorldQuaternion(this.spinQG);
+    for (const { bone, side } of this.spinArmBones) {
+      if (!bone.parent) continue;
+      bone.getWorldQuaternion(this.spinQW);
+      this.spinDir.set(0, 1, 0).applyQuaternion(this.spinQW);
+      this.spinTgt.set(side, 0, 0).applyQuaternion(this.spinQG);
+      this.spinQR.setFromUnitVectors(this.spinDir, this.spinTgt);
+      bone.parent.getWorldQuaternion(this.spinQP);
+      bone.quaternion.copy(this.spinQP.invert().multiply(this.spinQR).multiply(this.spinQW));
+    }
   }
 
   /** Parent the weapon anchor to the right-hand bone (cm-scale rig) or body fallback. */
@@ -563,6 +639,7 @@ export class Player {
       if (this.buffTimer <= 0) this.buffDmgMult = 1;
     }
     if (this.mixer) this.mixer.update(dt);
+    this.updateSpinArms();
 
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt * 4);

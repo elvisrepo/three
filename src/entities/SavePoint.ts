@@ -29,7 +29,7 @@ let circleTex: THREE.CanvasTexture | null = null;
 let moteTex: THREE.CanvasTexture | null = null;
 
 /** Vertical light streaks (white on black — black vanishes under AdditiveBlending). */
-function getPillarTexture(): THREE.CanvasTexture {
+export function getPillarTexture(): THREE.CanvasTexture {
   if (pillarTex) return pillarTex;
   const c = document.createElement('canvas');
   c.width = 128;
@@ -67,7 +67,7 @@ function getPillarTexture(): THREE.CanvasTexture {
 }
 
 /** Rune circle: concentric rings + tick marks, drawn once, tinted per effect. */
-function getCircleTexture(): THREE.CanvasTexture {
+export function getCircleTexture(): THREE.CanvasTexture {
   if (circleTex) return circleTex;
   const S = 256;
   const c = document.createElement('canvas');
@@ -117,7 +117,7 @@ function getCircleTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function getMoteTexture(): THREE.CanvasTexture {
+export function getMoteTexture(): THREE.CanvasTexture {
   if (moteTex) return moteTex;
   const c = document.createElement('canvas');
   c.width = 64;
