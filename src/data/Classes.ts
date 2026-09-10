@@ -70,6 +70,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     crit: 0.1,
     fireMult: 1.5,
     attrs: { str: 3, dex: 5, int: 9, vit: 4 },
+    model: 'models/player/mage',
   },
 };
 

@@ -30,6 +30,30 @@ function lerpAngle(a: number, b: number, t: number): number {
   return a + d * t;
 }
 
+/**
+ * Slide steering (shared player + monster): strip the velocity component
+ * pointing into nearby colliders, keeping tangential motion so bodies slip
+ * around trunks/NPCs/walls instead of juddering head-on forever.
+ * Mutates `move` (caller-owned); zero vector = fully pocketed, stay put.
+ */
+export function deflectMove(pos: THREE.Vector3, radius: number, move: THREE.Vector3, colliders: CircleCollider[]): void {
+  for (const c of colliders) {
+    const dx = pos.x - c.pos.x;
+    const dz = pos.z - c.pos.z;
+    const bubble = radius + c.radius + 0.5;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= bubble * bubble || d2 < 1e-6) continue;
+    const d = Math.sqrt(d2);
+    const nx = dx / d;
+    const nz = dz / d;
+    const into = -(move.x * nx + move.z * nz);
+    if (into > 0) {
+      move.x += nx * into;
+      move.z += nz * into;
+    }
+  }
+}
+
 /** Dodge dash: brief i-frame dash toward cursor/facing (≈5.5 units). */
 export const DODGE_TIME = 0.25;
 export const DODGE_CD = 2.5;
@@ -78,6 +102,8 @@ export class Player {
   alive = true;
   attackTarget: Attackable | null = null;
   swingAnim = 0;
+  /** Windup-cast gesture (mage cast.fbx) — rising edge plays animCast, like swingAnim. */
+  castAnim = 0;
   /** While true, locomotion never touches facing (whirlwind owns rotation). */
   spinLock = false;
   /** While true, arms are held out horizontally (whirlwind T-pose). Set by Game. */
@@ -98,6 +124,8 @@ export class Player {
   private fallbackArmR: THREE.Mesh;
   private target: THREE.Vector3 | null = null;
   private walkTime = 0;
+  /** Scratch for the pocket sidestep (no per-frame allocation). */
+  private steerTmp = new THREE.Vector3();
   private stopDistance = 0.2;
   private flash = 0;
 
@@ -107,6 +135,7 @@ export class Player {
   private animIdle: THREE.AnimationAction | null = null;
   private animRun: THREE.AnimationAction | null = null;
   private animAttack: THREE.AnimationAction | null = null;
+  private animCast: THREE.AnimationAction | null = null;
   private animHit: THREE.AnimationAction | null = null;
   private animDeath: THREE.AnimationAction | null = null;
   private modelMats: THREE.MeshStandardMaterial[] = [];
@@ -121,6 +150,7 @@ export class Player {
   private readonly spinQP = new THREE.Quaternion();
   private readonly spinDir = new THREE.Vector3();
   private readonly spinTgt = new THREE.Vector3();  private lastSwing = 0;
+  private lastCast = 0;
   private lastHitAnimAt = -10;
   private elapsed = 0;
   private deathPlayed = false;
@@ -315,7 +345,7 @@ export class Player {
   private hideModel(): void {
     this.modelKey = null;
     this.mixer = null;
-    this.animIdle = this.animRun = this.animAttack = this.animHit = this.animDeath = null;
+    this.animIdle = this.animRun = this.animAttack = this.animCast = this.animHit = this.animDeath = null;
     this.modelMats = [];
     if (this.modelRoot) {
       this.group.remove(this.modelRoot);
@@ -407,8 +437,7 @@ export class Player {
     let hand: THREE.Object3D | null = null;
     if (this.modelRoot) {
       this.modelRoot.traverse((o) => {
-        if (!hand && /righthand/i.test(o.name)) hand = o;
-      });
+        if (!hand && /righthand/i.test(o.name)) hand = o;      });
       if (!hand) {
         this.modelRoot.traverse((o) => {
           if (!hand && /hand/i.test(o.name)) hand = o;
@@ -426,6 +455,26 @@ export class Player {
       this.weaponAnchor.position.set(0.55, 1.1, 0.25);
       this.weaponAnchor.rotation.set(0, 0, 0);
       this.weaponAnchor.scale.setScalar(1);
+    }
+  }
+
+  /**
+   * Kill XZ root motion on looping clips (run/idle) so the model stays glued
+   * to the simulated body. Mixamo downloads without "In Place" translate the
+   * hips meters per loop — the model lunges ahead and snaps back every stride
+   * while the real position advances steadily. Y bounce is preserved.
+   */
+  private stripRootMotion(clip: THREE.AnimationClip): void {
+    for (const track of clip.tracks) {
+      if (!track.name.endsWith('mixamorigHips.position')) continue;
+      const v = (track as THREE.VectorKeyframeTrack).values;
+      if (v.length < 3) continue;
+      const bx = v[0];
+      const bz = v[2];
+      for (let i = 0; i < v.length; i += 3) {
+        v[i] = bx;
+        v[i + 2] = bz;
+      }
     }
   }
 
@@ -469,6 +518,7 @@ export class Player {
 
     this.mixer = new THREE.AnimationMixer(baseObj);
     const idleClip = baseObj.animations[0] ?? null;
+    if (idleClip) this.stripRootMotion(idleClip);
     if (idleClip) {
       this.animIdle = this.mixer.clipAction(idleClip);
       this.animIdle.setLoop(THREE.LoopRepeat, Infinity);
@@ -476,18 +526,26 @@ export class Player {
     }
 
     // Animation-only files share the same mixamorig bone names — clips apply directly.
+    // cast.fbx is mage-only (skyward channel for windups); other classes skip it
+    // so their consoles stay clean.
     const extra: Array<{ file: string; set: (a: THREE.AnimationAction) => void; loop: boolean; speed: number }> = [
       { file: 'run.fbx', set: (a) => (this.animRun = a), loop: true, speed: 1 },
-      { file: 'attack.fbx', set: (a) => (this.animAttack = a), loop: false, speed: 2.2 },
+      // Mage spams its basic every 0.5s — its gesture must finish inside that
+      // window or locomotion starves (warrior's 3s slash never has this problem).
+      { file: 'attack.fbx', set: (a) => (this.animAttack = a), loop: false, speed: cls === 'mage' ? 3.5 : 2.2 },
       { file: 'hit.fbx', set: (a) => (this.animHit = a), loop: false, speed: 1.6 },
       { file: 'death.fbx', set: (a) => (this.animDeath = a), loop: false, speed: 1 },
     ];
+    if (cls === 'mage') {
+      extra.push({ file: 'cast.fbx', set: (a) => (this.animCast = a), loop: false, speed: 2 });
+    }
     await Promise.all(
       extra.map(async (e) => {
         try {
           const obj = await loader.loadAsync(url(e.file));
           const clip = obj.animations[0];
           if (!clip || !this.mixer) return;
+          if (e.file === 'run.fbx') this.stripRootMotion(clip);
           const action = this.mixer.clipAction(clip);
           if (e.loop) {
             action.setLoop(THREE.LoopRepeat, Infinity);
@@ -510,7 +568,7 @@ export class Player {
     // slash, death interrupts all). `enabled` (not `isRunning`) on purpose:
     // a finished one-shot is paused-but-enabled, clamped at its end pose,
     // and fading is mixer-time driven so it still releases.
-    for (const a of [this.animIdle, this.animRun, this.animAttack, this.animHit, this.animDeath]) {
+    for (const a of [this.animIdle, this.animRun, this.animAttack, this.animCast, this.animHit, this.animDeath]) {
       if (a && a !== action && a.enabled) a.fadeOut(dur);
     }
     action.reset();
@@ -522,6 +580,7 @@ export class Player {
   private oneShotPlaying(): boolean {
     return !!(
       (this.animAttack && this.animAttack.isRunning()) ||
+      (this.animCast && this.animCast.isRunning()) ||
       (this.animHit && this.animHit.isRunning())
     );
   }
@@ -544,6 +603,28 @@ export class Player {
     this.group.rotation.y = Math.atan2(p.x - this.group.position.x, p.z - this.group.position.z);
   }
 
+  /**
+   * True when an obstacle crowds the click point AND we have reached its rim:
+   * closest possible distance is (rim - targetDepth); +0.9 covers the slide
+   * orbit radius so circling the trunk counts as arriving.
+   */
+  private arrivalBlocked(target: THREE.Vector3, colliders: CircleCollider[]): boolean {
+    const px = this.group.position.x - target.x;
+    const pz = this.group.position.z - target.z;
+    const pd2 = px * px + pz * pz;
+    for (const c of colliders) {
+      const tx = target.x - c.pos.x;
+      const tz = target.z - c.pos.z;
+      const rim = c.radius + this.radius;
+      const hug = rim + 0.9;
+      const tc2 = tx * tx + tz * tz;
+      if (tc2 >= hug * hug) continue;
+      const closest = Math.max(0, rim - Math.sqrt(tc2)) + 0.9;
+      if (pd2 <= closest * closest) return true;
+    }
+    return false;
+  }
+
   takeDamage(amount: number): boolean {
     if (!this.alive || this.dodgeTimer > 0) return false;
     this.hp -= amount;
@@ -554,7 +635,7 @@ export class Player {
       m.emissive.setHex(0xff2222);
       m.emissiveIntensity = 0.7;
     }
-    if (this.mixer && this.animHit && this.elapsed - this.lastHitAnimAt > 0.35) {
+    if (this.mixer && this.animHit && this.elapsed - this.lastHitAnimAt > 0.35 && !this.animHit.isRunning()) {
       this.lastHitAnimAt = this.elapsed;
       this.fadeTo(this.animHit, 0.08);
     }
@@ -620,6 +701,7 @@ export class Player {
     this.dodgeCd = 0;
     this.deathPlayed = false;
     this.lastSwing = 0;
+    this.lastCast = 0;
     if (this.mixer && this.animIdle) {
       this.animDeath?.stop();
       this.fadeTo(this.animIdle, 0.2);
@@ -656,14 +738,30 @@ export class Player {
       if (!this.modelRoot) {
         const s = 1 + this.swingAnim * 0.12;
         this.body.scale.set(s, 2 - s > 0.6 ? 2 - s : 1, s);
-        if (this.swingAnim === 0) this.body.scale.set(1, 1, 1);
+        if (this.swingAnim === 0 && this.castAnim === 0) this.body.scale.set(1, 1, 1);
       }
     }
     // Rising edge on swingAnim (Game sets it to 1 per attack) -> slash once.
-    if (this.swingAnim > 0.5 && swingBefore <= 0.5 && this.alive && this.mixer && this.animAttack) {
+    // Never restart a running gesture: spam casts would snap the torso
+    // back-and-forth and starve the run loop (mage 0.5s builder).
+    if (this.swingAnim > 0.5 && swingBefore <= 0.5 && this.alive && this.mixer && this.animAttack && !this.animAttack.isRunning()) {
       this.fadeTo(this.animAttack, 0.08);
     }
     this.lastSwing = this.swingAnim;
+    // Rising edge on castAnim (Game sets it to 1 per windup cast) -> channel once.
+    const castBefore = this.lastCast;
+    if (this.castAnim > 0) {
+      this.castAnim = Math.max(0, this.castAnim - dt * 6);
+      if (!this.modelRoot && this.swingAnim === 0) {
+        const s = 1 + this.castAnim * 0.12;
+        this.body.scale.set(s, 2 - s > 0.6 ? 2 - s : 1, s);
+        if (this.castAnim === 0) this.body.scale.set(1, 1, 1);
+      }
+    }
+    if (this.castAnim > 0.5 && castBefore <= 0.5 && this.alive && this.mixer && this.animCast) {
+      this.fadeTo(this.animCast, 0.12);
+    }
+    this.lastCast = this.castAnim;
 
     if (!this.alive) {
       if (this.mixer && this.animDeath) {
@@ -695,7 +793,9 @@ export class Player {
       move.copy(this.target).sub(this.group.position);
       move.y = 0;
       const dist = move.length();
-      if (dist < this.stopDistance) {
+      // Blocked arrival: a click inside/against a trunk or fountain rim can
+      // never get closer than the rim — arriving at rim + reach counts.
+      if (dist < this.stopDistance || (dist < 3 && this.arrivalBlocked(this.target, colliders))) {
         this.target = null;
         this.isMoving = false;
         if (this.mixer) this.playLoop('idle');
@@ -710,7 +810,33 @@ export class Player {
 
     this.isMoving = true;
     if (this.mixer) this.playLoop('run');
-    this.group.position.addScaledVector(move, (dodging ? DODGE_SPEED : this.speed) * dt);
+    const stepLen = (dodging ? DODGE_SPEED : this.speed) * dt;
+    deflectMove(this.group.position, this.radius, move, colliders);
+    let moved = false;
+    if (move.lengthSq() > 1e-6) {
+      move.normalize();
+      this.group.position.addScaledVector(move, stepLen);
+      moved = true;
+    } else {
+      // Dead head-on (measure-zero symmetry): deterministic left sidestep to
+      // break it — next frame the geometry is asymmetric and slide takes over.
+      this.steerTmp.copy(this.target && !dodging ? this.target : this.group.position)
+        .sub(this.group.position)
+        .setY(0);
+      if (!dodging && this.steerTmp.lengthSq() > 1e-6) {
+        this.steerTmp.normalize();
+        move.set(-this.steerTmp.z, 0, this.steerTmp.x);
+      } else if (dodging) {
+        move.copy(this.dodgeDir);
+      }
+      if (move.lengthSq() > 1e-6) {
+        this.group.position.addScaledVector(move, stepLen);
+        moved = true;
+      } else {
+        this.isMoving = false;
+        if (this.mixer) this.playLoop('idle');
+      }
+    }
 
     for (const c of colliders) {
       const dx = this.group.position.x - c.pos.x;
@@ -730,7 +856,7 @@ export class Player {
     this.group.position.y = 0;
 
     const targetYaw = Math.atan2(move.x, move.z);
-    if (!this.spinLock) {
+    if (moved && !this.spinLock) {
       this.group.rotation.y = lerpAngle(this.group.rotation.y, targetYaw, 1 - Math.exp(-12 * dt));
     }
 

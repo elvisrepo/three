@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import type { CircleCollider } from './Player';
+import { deflectMove } from './Player';
 import type { DamageNumbers } from './DamageNumbers';
 import { rollMonsterDamage } from '../combat/Stats';
 import { buildGoblin, poseGoblin, type GoblinRig } from './Goblin';
@@ -528,7 +529,20 @@ export class Monster {
     if (len < 0.05) return;
     _steer.normalize();
     const effSpeed = this.speed * mult * (this.slowTimer > 0 ? 0.5 : 1);
-    this.group.position.addScaledVector(_steer, effSpeed * dt);
+    // Slide around trunks/walls instead of juddering head-on (shared helper).
+    deflectMove(this.group.position, this.radius, _steer, statics);
+    if (_steer.lengthSq() <= 1e-6) {
+      // Dead head-on: deterministic sidestep, same as the player.
+      _steer.copy(target).sub(this.group.position).setY(0);
+      if (_steer.lengthSq() > 1e-6) {
+        _steer.normalize();
+        _steer.set(-_steer.z, 0, _steer.x);
+      }
+    }
+    if (_steer.lengthSq() > 1e-6) {
+      _steer.normalize();
+      this.group.position.addScaledVector(_steer, effSpeed * dt);
+    }
     this.moving = true;
     this.walkPhase += dt * (5 + effSpeed * 1.6);
 

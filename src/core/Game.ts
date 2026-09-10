@@ -2033,14 +2033,14 @@ export class Game {
         const m = this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true, meteor: true });
         m.qFall = this.meteorFx.startFall(aim.x, aim.z);
         this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 0.7);
-        this.player.swingAnim = 1;
+        this.player.castAnim = 1;
         this.sound.fireball();
         break;
       }
       case 'frost_nova': {
         this.queueAoe(this.player.position.x, this.player.position.z, 4.5, dmg * 1.6, 3, 0.2, 0x9adcff);
         this.chargeCast(new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0).normalize(), 0x9adcff, 0.2);
-        this.player.swingAnim = 1;
+        this.player.castAnim = 1;
         this.sound.blink();
         break;
       }
@@ -2126,14 +2126,14 @@ export class Game {
           c.qFall = this.meteorFx.startFall(sx, sz);
         }
         this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 1.2);
-        this.player.swingAnim = 1;
+        this.player.castAnim = 1;
         this.sound.fireball();
         break;
       }
       case 'glacial_prison': {
         this.queueAoe(this.player.position.x, this.player.position.z, 7, dmg * 2.5, 5, 0.5, 0x9adcff);
         this.chargeCast(new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0).normalize(), 0x9adcff, 0.5);
-        this.player.swingAnim = 1;
+        this.player.castAnim = 1;
         this.sound.blink();
         break;
       }
