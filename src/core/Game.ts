@@ -5,6 +5,7 @@ import { BossController } from '../entities/Boss';
 import { DamageNumbers } from '../entities/DamageNumbers';
 import { SoundManager } from '../audio/Sound';
 import { Effects } from '../entities/Effects';
+import { SavePointEffect } from '../entities/SavePoint';
 import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
@@ -142,6 +143,10 @@ export class Game {
   private chest!: THREE.Group;
   private fountain!: THREE.Group;
   private fountainWater!: THREE.MeshStandardMaterial;
+  /** ICS save-point auras (pillar + swirl + circle + motes + pulse), one per Haven spot. */
+  private portalAura!: SavePointEffect;
+  private sanctumAura!: SavePointEffect;
+  private fountainAura!: SavePointEffect;
   private fountainFxT = 0;
   private paused = false;
   private stashOpen = false;
@@ -418,6 +423,8 @@ export class Game {
     plabel.position.y = 3.5;
     portal.add(arch, disc, plabel);
     portal.userData.interact = 'portal';
+    this.portalAura = new SavePointEffect({ color: 0x5da9ff, radius: 1.3, height: 6, motes: 12, phase: 0 });
+    portal.add(this.portalAura.group);
     this.scene.add(portal);
     this.portalMesh = portal;
 
@@ -470,6 +477,8 @@ export class Game {
     slabel.position.y = 4.4;
     sanctum.add(sring, sdisc, sbeam, slabel);
     sanctum.userData.interact = 'sanctum';
+    this.sanctumAura = new SavePointEffect({ color: 0xffd21f, radius: 2.0, height: 7, motes: 14, phase: 1.5 });
+    sanctum.add(this.sanctumAura.group);
     this.scene.add(sanctum);
     this.sanctum = sanctum;
 
@@ -502,6 +511,8 @@ export class Game {
     const flabel = this.makeLabel('⛲ FOUNTAIN');
     flabel.position.y = 2.7;
     fountain.add(basin, water, pillar, orb, flabel);
+    this.fountainAura = new SavePointEffect({ color: 0x3fc9ff, radius: 1.1, height: 5, motes: 10, phase: 2.8 });
+    fountain.add(this.fountainAura.group);
     this.scene.add(fountain);
     this.fountain = fountain;
   }
@@ -2657,8 +2668,12 @@ export class Game {
     const dt = Math.min(this.clock.getDelta(), 0.05);
     if (dt > 0) this.fpsEma += (1 / dt - this.fpsEma) * 0.05;
 
-    // Behind the character-select overlay: render the city, simulate nothing.
+    // Behind the character-select overlay: render the city, simulate nothing
+    // (save-point auras still breathe so the backdrop feels alive).
     if (!this.started) {
+      this.portalAura.update(dt);
+      this.sanctumAura.update(dt);
+      this.fountainAura.update(dt);
       this.renderer.render(this.scene, this.camera);
       return;
     }
@@ -2873,6 +2888,9 @@ export class Game {
     this.loot.update(dt);
     this.numbers.update(dt);
     this.effects.update(dt);
+    this.portalAura.update(dt);
+    this.sanctumAura.update(dt);
+    this.fountainAura.update(dt);
     this.sound.update(dt);
     // Sanctum idle sparkles (gold dust drifting up)
     this.sanctumFx -= dt;
