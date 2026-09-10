@@ -6,6 +6,7 @@ import { DamageNumbers } from '../entities/DamageNumbers';
 import { SoundManager } from '../audio/Sound';
 import { Effects } from '../entities/Effects';
 import { SavePointEffect, getPillarTexture, getCircleTexture, getMoteTexture } from '../entities/SavePoint';
+import { ChargeUp, MuzzleFlash } from '../entities/ChargeCast';
 import { ProjectilePool } from '../entities/ProjectilePool';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
@@ -129,6 +130,11 @@ export class Game {
   private numbers!: DamageNumbers;
   private effects!: Effects;
   private projectiles!: ProjectilePool;
+  /** Charged-blast cast kit: windup charges (round-robin ×2) + muzzle pops (×4). */
+  private chargeUps: ChargeUp[] = [];
+  private chargeCursor = 0;
+  private muzzles: MuzzleFlash[] = [];
+  private muzzleCursor = 0;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -366,6 +372,8 @@ export class Game {
     this.numbers = new DamageNumbers(this.scene);
     this.effects = new Effects(this.scene);
     this.projectiles = new ProjectilePool(this.scene, 24);
+    for (let i = 0; i < 2; i++) this.chargeUps.push(new ChargeUp(this.scene));
+    for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
     this.loot = new LootManager(this.scene);
     this.stash.fromJSON(loadSharedStash(), 0);
   }
@@ -1675,11 +1683,19 @@ export class Game {
       this.effDmg(this.player.attackDamage) * FIREBALL_MULT * this.player.fireMult,
       16,
       18,
+      undefined,
+      0xff6a00,
     );
     this.player.faceInstant(this.tmpVec.clone().add(this.player.position));
     this.player.swingAnim = 1;
     this.fireTimer = FIREBALL_CD;
     this.sound.fireball();
+    this.fireMuzzle(
+      this.player.position.x + this.tmpVec.x * 0.7,
+      1.3,
+      this.player.position.z + this.tmpVec.z * 0.7,
+      0xff6a00,
+    );
     this.effects.burst(
       this.player.position.x + this.tmpVec.x,
       1.3,
@@ -2001,12 +2017,14 @@ export class Game {
         const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
         if (!aim) return;
         this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true });
+        this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 0.7);
         this.player.swingAnim = 1;
         this.sound.fireball();
         break;
       }
       case 'frost_nova': {
         this.queueAoe(this.player.position.x, this.player.position.z, 4.5, dmg * 1.6, 3, 0.2, 0x9adcff);
+        this.chargeCast(new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0).normalize(), 0x9adcff, 0.2);
         this.player.swingAnim = 1;
         this.sound.blink();
         break;
@@ -2091,12 +2109,14 @@ export class Game {
         for (const [sx, sz, delay] of spots) {
           this.queueAoe(sx, sz, 3.5, dmg * 3 * this.player.fireMult, 0, delay, 0xff6a00, { flash: '#ff8a2e', scorch: true, sfx: 'slam' });
         }
+        this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 1.2);
         this.player.swingAnim = 1;
         this.sound.fireball();
         break;
       }
       case 'glacial_prison': {
         this.queueAoe(this.player.position.x, this.player.position.z, 7, dmg * 2.5, 5, 0.5, 0x9adcff);
+        this.chargeCast(new THREE.Vector3(0, 0, 1).applyQuaternion(this.player.group.quaternion).setY(0).normalize(), 0x9adcff, 0.5);
         this.player.swingAnim = 1;
         this.sound.blink();
         break;
@@ -2133,6 +2153,26 @@ export class Game {
       this.camShake = Math.min(0.6, this.camShake + 0.2);
       this.updateBossBar();
     }
+  }
+
+  /** Muzzle pop from the pool (charged-blast release half). */
+  private fireMuzzle(x: number, y: number, z: number, color: number): void {
+    const m = this.muzzles[this.muzzleCursor];
+    this.muzzleCursor = (this.muzzleCursor + 1) % this.muzzles.length;
+    m.fire(x, y, z, color);
+  }
+
+  /**
+   * Charged-blast windup at the caster's hand: charge orb gathers for `dur`
+   * (the skill's existing delay), then a muzzle pop launches it. Pure juice —
+   * damage/timing unchanged.
+   */
+  private chargeCast(dir: THREE.Vector3, color: number, dur: number): void {
+    const hx = this.player.position.x + dir.x * 0.7;
+    const hz = this.player.position.z + dir.z * 0.7;
+    const c = this.chargeUps[this.chargeCursor];
+    this.chargeCursor = (this.chargeCursor + 1) % this.chargeUps.length;
+    c.start(hx, 1.4, hz, color, dur, () => this.fireMuzzle(hx, 1.4, hz, color));
   }
 
   private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string }): void {
@@ -2983,10 +3023,15 @@ export class Game {
         this.sound.hit(false);
         this.effects.burst(m.position.x, 1.4, m.position.z, { color, count: 10, speed: 4, life: 0.4, size: 0.9 });
       },
+      (x, y, z, color) => {
+        this.effects.burst(x, y, z, { color, count: 1, speed: 0.5, up: 2, gravity: -1, life: 0.35, size: 0.6 });
+      },
     );
     this.loot.update(dt);
     this.numbers.update(dt);
     this.effects.update(dt);
+    for (const c of this.chargeUps) c.update(dt);
+    for (const m of this.muzzles) m.update(dt);
     this.portalAura.update(dt);
     this.sanctumAura.update(dt);
     this.fountainAura.update(dt);

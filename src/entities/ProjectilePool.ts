@@ -1,15 +1,20 @@
 import * as THREE from 'three';
 import type { Monster } from './Monster';
 import type { DamageNumbers } from './DamageNumbers';
+import { getMoteTexture } from './SavePoint';
 
 interface Bolt {
   mesh: THREE.Mesh;
   mat: THREE.MeshStandardMaterial;
+  glowMat: THREE.SpriteMaterial;
   vel: THREE.Vector3;
   traveled: number;
   range: number;
   damage: number;
   color: number;
+  /** Trail ember color (null = no trail — arrows, shields stay clean). */
+  trail: number | null;
+  trailT: number;
   active: boolean;
 }
 
@@ -19,6 +24,7 @@ export class ProjectilePool {
 
   constructor(scene: THREE.Scene, size = 16) {
     const geo = new THREE.SphereGeometry(0.24, 12, 10);
+    const glowTex = getMoteTexture();
     for (let i = 0; i < size; i++) {
       const mat = new THREE.MeshStandardMaterial({
         color: 0xff9a2e,
@@ -29,25 +35,41 @@ export class ProjectilePool {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.visible = false;
       mesh.castShadow = false;
+      const glowMat = new THREE.SpriteMaterial({
+        map: glowTex,
+        color: 0xff6a00,
+        transparent: true,
+        opacity: 0.75,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const glow = new THREE.Sprite(glowMat);
+      glow.scale.setScalar(1.5);
+      glow.renderOrder = 21;
+      mesh.add(glow);
       scene.add(mesh);
-      this.bolts.push({ mesh, mat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, active: false });
+      this.bolts.push({ mesh, mat, glowMat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, trail: null, trailT: 0, active: false });
     }
   }
 
-  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number): void {
+  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number, trail?: number | null): void {
     const bolt = this.bolts.find((b) => !b.active);
     if (!bolt) return;
     bolt.active = true;
     bolt.damage = damage;
     bolt.color = color ?? 0xff6a00;
+    bolt.trail = trail ?? null;
+    bolt.trailT = 0;
     bolt.range = range;
     bolt.traveled = 0;
     if (color !== undefined) {
       bolt.mat.color.setHex(color);
       bolt.mat.emissive.setHex(color);
+      bolt.glowMat.color.setHex(color);
     } else {
       bolt.mat.color.setHex(0xff9a2e);
       bolt.mat.emissive.setHex(0xff6a00);
+      bolt.glowMat.color.setHex(0xff6a00);
     }
     bolt.vel.copy(dir).setY(0).normalize().multiplyScalar(speed);
     bolt.mesh.position.set(from.x, 1.3, from.z);
@@ -66,6 +88,7 @@ export class ProjectilePool {
     numbers: DamageNumbers,
     onKill: (m: Monster) => void,
     onHit?: (dealt: number, m: Monster, color: number) => void,
+    onTrail?: (x: number, y: number, z: number, color: number) => void,
   ): void {
     for (const bolt of this.bolts) {
       if (!bolt.active) continue;
@@ -74,6 +97,14 @@ export class ProjectilePool {
       bolt.traveled += step.length();
       // spin glow pulse
       bolt.mat.emissiveIntensity = 1.3 + Math.sin(performance.now() * 0.02) * 0.5;
+      // fire trail: one ember mote per tick (pool-side, Game supplies the puff)
+      if (bolt.trail !== null && onTrail) {
+        bolt.trailT -= dt;
+        if (bolt.trailT <= 0) {
+          bolt.trailT = 0.06;
+          onTrail(bolt.mesh.position.x, bolt.mesh.position.y, bolt.mesh.position.z, bolt.trail);
+        }
+      }
 
       let hit = false;
       if (bolt.traveled < bolt.range + 2) {
