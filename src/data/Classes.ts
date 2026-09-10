@@ -56,6 +56,7 @@ export const CLASSES: Record<StarterClass, ClassDef> = {
     crit: 0.15,
     fireMult: 1.0,
     attrs: { str: 5, dex: 8, int: 4, vit: 5 },
+    model: 'models/player/archer',
   },
   mage: {
     id: 'mage',
