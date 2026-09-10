@@ -1356,7 +1356,7 @@ export class Game {
     boss.group.userData.monster = boss;
     this.monsters.push(boss);
     this.scene.add(boss.group);
-    this.bossCtrls.push(new BossController(this.scene, boss, { magma: def.id === 'ember' }));
+    this.bossCtrls.push(new BossController(this.scene, boss, { magma: def.id === 'ember', portals: def.id === 'wilds' }));
   }
 
   private spawnMinion(x: number, z: number, level: number): void {
@@ -3190,6 +3190,13 @@ export class Game {
         this.spawnMinion(b.boss.position.x - 2.5, b.boss.position.z - 2.5, b.boss.level - 1);
         this.sound.roar();
         this.showToast('The boss calls for aid!', 2);
+      }
+      const portalDmg = b.consumePortalDamage();
+      if (portalDmg > 0 && this.player.alive) {
+        this.damagePlayer(portalDmg);
+        this.camShake = Math.min(0.9, this.camShake + 0.4);
+        this.sound.bossSlam();
+        this.showToast('🔮 Portal beams! Keep moving!', 2);
       }
     }
 
