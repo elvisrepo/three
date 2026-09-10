@@ -437,5 +437,7 @@ Things offered or noticed but deliberately not built yet. Check here before prop
 ### Tech debt (works, but note the shape)
 - `Game.ts` split done (9 pure `src/ui/` builders; `Game.ts` keeps thin DOM wrappers + sim). Remainder intentionally in `Game.ts`: `updateBossBar`, toast/flash/marker helpers, `drawMinimap`.
 - `applySave` recomputes totals from scratch (class → attrs → levels → gear → job). Any new bonus source must be added to **both** its live path and `applySave` or loads will silently drop it.
-- Cooldown UI is per-slot bespoke (`cd-fire`, `cd-blink`, `cd-skill2` + `cdn-*`); a 3rd active skill should generalize this into a small helper.
-- `healLifesteal` + `hitAllInRadius` duplicate the damage→heal→kill chain in three places (melee, projectiles via callback, AoE). Unify if a 4th damage source appears.
+- Cooldown UI — done (one `syncCooldown` helper; a 6th skill adds one call).
+- Damage chain — done (`damageMonster` pipeline + `killMonster` tail for melee/AoE/projectile-kill; pool still rolls projectile damage internally, lifesteal on its `onHit`).
+- Rift mood — done (`rift` generative mood; rifts no longer play city music). True composed/streamed tracks still need asset files (zero-asset Web Audio policy).
+- Art pass — partial (player classes + meadow/wilds bosses on FBX). Blocked on assets: `crypt` boss has no model dir, `ember` dir is empty → capsule fallback. Supply FBX sets to finish.

@@ -5,7 +5,7 @@
  * The AudioContext is created lazily on the first user gesture (autoplay policy).
  */
 
-export type MusicMood = 'city' | 'meadow' | 'crypt' | 'ember' | 'wilds';
+export type MusicMood = 'city' | 'meadow' | 'crypt' | 'ember' | 'wilds' | 'rift';
 
 interface MoodDef {
   root: number;
@@ -23,6 +23,7 @@ const MOODS: Record<MusicMood, MoodDef> = {
   crypt: { root: 110, scale: [0, 2, 3, 7, 8], chord: [0, 3, 7], padEvery: 11, pluckEvery: [0.8, 1.8], pluckVol: 0.045, cutoff: 500 },
   ember: { root: 98, scale: [0, 2, 3, 7, 10], chord: [0, 3, 7], padEvery: 9, pluckEvery: [0.5, 1.2], pluckVol: 0.05, cutoff: 700 },
   wilds: { root: 130, scale: [0, 2, 3, 7, 8], chord: [0, 3, 7], padEvery: 12, pluckEvery: [0.9, 2.0], pluckVol: 0.04, cutoff: 600 },
+  rift: { root: 82, scale: [0, 1, 5, 6, 10], chord: [0, 1, 7], padEvery: 14, pluckEvery: [1.2, 2.6], pluckVol: 0.035, cutoff: 420 },
 };
 
 const SETTINGS_KEY = 'arpg.settings.v1';

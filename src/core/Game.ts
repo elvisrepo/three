@@ -1272,7 +1272,7 @@ export class Game {
 
     this.scene.background = new THREE.Color(def.fogColor);
     (this.scene.fog as THREE.Fog).color.setHex(def.fogColor);
-    const mood = def.id === 'ember' ? 'ember' : def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : def.id === 'wilds' ? 'wilds' : 'city';
+    const mood = def.id === 'ember' ? 'ember' : def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : def.id === 'wilds' ? 'wilds' : def.id === 'rift' ? 'rift' : 'city';
     this.sound.setMood(mood);
     this.groundMat.color.setHex(def.groundColor);
     for (const w of this.wallMats) w.color.setHex(def.wallColor);
@@ -1946,14 +1946,7 @@ export class Game {
     if (!target) return; // swung at air — mana spent, nothing hit
     this.player.faceInstant(target.position);
     const roll = rollPlayerDamage(this.effDmg(this.player.attackDamage) * 2.3, this.player.critChance);
-    const died = target.takeDamage(roll.amount, roll.isCrit, this.numbers);
-    this.healLifesteal(roll.amount);
-    this.sound.hit(roll.isCrit);
-    this.effects.burst(target.position.x, 1.4, target.position.z, { color: 0xffd21f, count: 8, speed: 4, life: 0.35, size: 0.9 });
-    if (died) {
-      this.onMonsterKilled(target);
-      this.player.clearAttackTarget();
-    }
+    this.damageMonster(target, roll.amount, { crit: roll.isCrit, color: 0xffd21f, count: 8, life: 0.35, y: 1.4 });
     this.updateBossBar();
   }
 
@@ -2343,7 +2336,51 @@ export class Game {
     this.skill3CdMax = cd;
   }
 
-  /** Melee-style AoE with lifesteal + shared kill handling. Slow in seconds (0 = none). */
+  /** Shared kill tail: loot/XP/quest payout + target + boss bar. */
+  private killMonster(m: Monster): void {
+    this.onMonsterKilled(m);
+    if (this.player.attackTarget === m) this.player.clearAttackTarget();
+    this.updateBossBar();
+  }
+
+  /**
+   * Single damage→heal→kill pipeline for all direct player damage sources
+   * (melee swings, AoE). Projectiles roll inside the pool and rejoin here via
+   * killMonster for the tail. Returns true if the blow killed.
+   */
+  private damageMonster(
+    m: Monster,
+    amount: number,
+    opts?: {
+      crit?: boolean;
+      slow?: number;
+      color?: number;
+      count?: number;
+      speed?: number;
+      life?: number;
+      size?: number;
+      y?: number;
+      /** Hit-sound crit flag (AoE always plays the non-crit thock). */
+      soundCrit?: boolean;
+    },
+  ): boolean {
+    if (!m.alive) return false;
+    const crit = opts?.crit ?? false;
+    const died = m.takeDamage(amount, crit, this.numbers);
+    if (opts?.slow) m.applySlow(opts.slow, this.numbers);
+    this.healLifesteal(amount);
+    this.sound.hit(opts?.soundCrit ?? crit);
+    this.effects.burst(m.position.x, opts?.y ?? 1.3, m.position.z, {
+      color: opts?.color ?? 0xffffff,
+      count: opts?.count ?? 7,
+      speed: opts?.speed ?? 4,
+      life: opts?.life ?? 0.4,
+      size: opts?.size ?? 0.9,
+    });
+    if (died) this.killMonster(m);
+    return died;
+  }
+
   private hitAllInRadius(center: THREE.Vector3, radius: number, damage: number, slow: number, color = 0xffffff): void {
     let hitAny = false;
     for (const m of this.monsters) {
@@ -2352,16 +2389,8 @@ export class Game {
       const dz = m.position.z - center.z;
       if (dx * dx + dz * dz > radius * radius) continue;
       const roll = rollPlayerDamage(damage, this.player.critChance);
-      const died = m.takeDamage(roll.amount, roll.isCrit, this.numbers);
-      if (slow > 0) m.applySlow(slow, this.numbers);
-      this.healLifesteal(roll.amount);
-      this.sound.hit(false);
-      this.effects.burst(m.position.x, 1.3, m.position.z, { color, count: 7, speed: 4, life: 0.4, size: 0.9 });
+      this.damageMonster(m, roll.amount, { crit: roll.isCrit, slow: slow > 0 ? slow : undefined, color, soundCrit: false });
       hitAny = true;
-      if (died) {
-        this.onMonsterKilled(m);
-        if (this.player.attackTarget === m) this.player.clearAttackTarget();
-      }
     }
     if (hitAny) {
       this.camShake = Math.min(0.6, this.camShake + 0.2);
@@ -3447,14 +3476,7 @@ export class Game {
         this.player.faceInstant(target.position);
         this.player.swingAnim = 1;
         const roll = rollPlayerDamage(this.effDmg(this.player.attackDamage), this.player.critChance);
-        const died = target.takeDamage(roll.amount, roll.isCrit, this.numbers);
-        this.healLifesteal(roll.amount);
-        this.sound.hit(roll.isCrit);
-        this.effects.burst(target.position.x, 1.4, target.position.z, { color: 0xfff2b0, count: 5, speed: 3, life: 0.3, size: 0.7 });
-        if (died) {
-          this.onMonsterKilled(target);
-          this.player.clearAttackTarget();
-        }
+        this.damageMonster(target, roll.amount, { crit: roll.isCrit, color: 0xfff2b0, count: 5, speed: 3, life: 0.3, size: 0.7, y: 1.4 });
         this.updateBossBar();
       }
     }
@@ -3467,9 +3489,7 @@ export class Game {
       this.monsters,
       this.numbers,
       (m) => {
-        this.onMonsterKilled(m);
-        if (this.player.attackTarget === m) this.player.clearAttackTarget();
-        this.updateBossBar();
+        this.killMonster(m);
       },
       (dealt, m, color, siphon) => {
         this.healLifesteal(dealt);
@@ -3553,27 +3573,19 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /** One skill-bar slot's cooldown sweep + numeric readout. A 6th active
+   *  skill just adds one call — no more per-slot bespoke blocks. */
+  private syncCooldown(cdEl: HTMLElement | null, numEl: HTMLElement | null, timer: number, max: number): void {
+    if (cdEl) cdEl.style.height = cdHeight(timer, max);
+    if (numEl) numEl.textContent = cdNum(timer);
+  }
+
   private updateHud(): void {
-    if (this.elFireCd) {
-      this.elFireCd.style.height = cdHeight(this.fireTimer, FIREBALL_CD);
-    }
-    if (this.elBlinkCd) {
-      this.elBlinkCd.style.height = cdHeight(this.blinkTimer, BLINK_CD);
-    }
-    if (this.elDodgeCd) {
-      this.elDodgeCd.style.height = cdHeight(this.player.dodgeCd, DODGE_CD);
-    }
-    if (this.elSkill2Cd) {
-      this.elSkill2Cd.style.height = cdHeight(this.skillTimer, this.skillCdMax);
-    }
-    if (this.elSkill3Cd) {
-      this.elSkill3Cd.style.height = cdHeight(this.skill3Timer, this.skill3CdMax);
-    }
-    if (this.elCdnSkill3) this.elCdnSkill3.textContent = cdNum(this.skill3Timer);
-    if (this.elCdnFire) this.elCdnFire.textContent = cdNum(this.fireTimer);
-    if (this.elCdnBlink) this.elCdnBlink.textContent = cdNum(this.blinkTimer);
-    if (this.elCdnDodge) this.elCdnDodge.textContent = cdNum(this.player.dodgeCd);
-    if (this.elCdnSkill2) this.elCdnSkill2.textContent = cdNum(this.skillTimer);
+    this.syncCooldown(this.elFireCd, this.elCdnFire, this.fireTimer, FIREBALL_CD);
+    this.syncCooldown(this.elBlinkCd, this.elCdnBlink, this.blinkTimer, BLINK_CD);
+    this.syncCooldown(this.elDodgeCd, this.elCdnDodge, this.player.dodgeCd, DODGE_CD);
+    this.syncCooldown(this.elSkill2Cd, this.elCdnSkill2, this.skillTimer, this.skillCdMax);
+    this.syncCooldown(this.elSkill3Cd, this.elCdnSkill3, this.skill3Timer, this.skill3CdMax);
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;
