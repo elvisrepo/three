@@ -2,7 +2,7 @@
 
 export type BindAction =
   | 'fire' | 'job' | 'ult' | 'potion' | 'blink' | 'dodge'
-  | 'interact' | 'tp' | 'bag' | 'char' | 'mute';
+  | 'interact' | 'tp' | 'bag' | 'char' | 'quest' | 'mute';
 
 export const BIND_LABELS: Record<BindAction, string> = {
   fire: 'Fireball',
@@ -15,11 +15,12 @@ export const BIND_LABELS: Record<BindAction, string> = {
   tp: 'Town portal',
   bag: 'Inventory',
   char: 'Character',
+  quest: 'Quest log',
   mute: 'Mute',
 };
 
 export const BIND_ORDER: BindAction[] = [
-  'fire', 'job', 'ult', 'potion', 'blink', 'dodge', 'interact', 'tp', 'bag', 'char', 'mute',
+  'fire', 'job', 'ult', 'potion', 'blink', 'dodge', 'interact', 'tp', 'bag', 'char', 'quest', 'mute',
 ];
 
 export const DEFAULT_BINDS: Record<BindAction, string> = {
@@ -33,6 +34,7 @@ export const DEFAULT_BINDS: Record<BindAction, string> = {
   tp: 'KeyT',
   bag: 'KeyI',
   char: 'KeyC',
+  quest: 'KeyJ',
   mute: 'KeyM',
 };
 

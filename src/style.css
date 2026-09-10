@@ -89,6 +89,63 @@ html, body, #app {
   font-variant-numeric: tabular-nums;
 }
 
+#quest-tracker {
+  top: 208px;
+  left: 12px;
+  width: 228px;
+}
+
+#quest-tracker b {
+  color: #7dffd4;
+}
+
+.quest-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.quest-row.done span {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.quest-card {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.quest-card.done {
+  border-color: rgba(125, 255, 212, 0.45);
+}
+
+.quest-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quest-bar {
+  height: 5px;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  margin: 6px 0 4px;
+  overflow: hidden;
+}
+
+.quest-bar div {
+  height: 100%;
+  background: #7dffd4;
+}
+
+.quest-reward {
+  color: #ffd479;
+  font-size: 12px;
+}
+
 .row-btns {
   display: flex;
   gap: 6px;

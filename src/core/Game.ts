@@ -34,6 +34,8 @@ import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedSt
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
 import { compareHtml } from '../ui/compare';
+import { QUESTS, isComplete, blankProgress, rewardText, type QuestDef, type QuestProgress } from '../data/Quests';
+import { questLogHtml, questTrackerHtml, type QuestEntry } from '../ui/quests';
 import { gearStatsText, equipRowHtml, invGridHtml } from '../ui/inventory';
 import { shopStockHtml } from '../ui/shop';
 import { portalListHtml } from '../ui/portal';
@@ -152,6 +154,9 @@ export class Game {
   private equipment = new Equipment();
   /** Account-wide shared stash (separate localStorage key, all heroes). */
   private stash = new Inventory();
+  /** Quest progress by quest id (persisted on the save — tolerant of old saves). */
+  private questState: Record<string, QuestProgress> = {};
+  private questOpen = false;
   private prevGear: GearBonus = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
 
   private shopNpc!: THREE.Group;
@@ -296,6 +301,9 @@ export class Game {
   private elControlsList: HTMLElement | null = null;
   private elStashPanel: HTMLElement | null = null;
   private elStashGrid: HTMLElement | null = null;
+  private elQuestPanel: HTMLElement | null = null;
+  private elQuestList: HTMLElement | null = null;
+  private elQuestTracker: HTMLElement | null = null;
   private elJobModal: HTMLElement | null = null;
   private elJobCards: HTMLElement | null = null;
   private elSkill2: HTMLElement | null = null;
@@ -771,6 +779,9 @@ export class Game {
     this.elControlsList = $('controls-list');
     this.elStashPanel = $('stash-panel');
     this.elStashGrid = $('stash-grid');
+    this.elQuestPanel = $('quest-panel');
+    this.elQuestList = $('quest-list');
+    this.elQuestTracker = $('quest-tracker');
     this.elJobModal = $('job-modal');
     this.elJobCards = $('job-cards');
     this.elSkill2 = $('skill-job');
@@ -900,6 +911,8 @@ export class Game {
       this.openCharSelect();
     });
     document.getElementById('stash-close')?.addEventListener('click', () => this.closeStash());
+    document.getElementById('btn-quest')?.addEventListener('click', () => this.toggleQuest());
+    document.getElementById('quest-close')?.addEventListener('click', () => this.toggleQuest(false));
     const vol = document.getElementById('volume-slider') as HTMLInputElement | null;
     if (vol) {
       vol.value = String(Math.round(this.sound.volume * 100));
@@ -1025,6 +1038,7 @@ export class Game {
           inventory: Array.isArray(obj.inventory) ? obj.inventory.slice(0, 24) : [],
           equipment: obj.equipment ?? { weapon: null, helm: null, chest: null, boots: null, ring: null },
           zoneId: typeof obj.zoneId === 'string' ? obj.zoneId : 'city',
+          quests: {},
           pos: Array.isArray(obj.pos) ? [Number(obj.pos[0]) || 0, Number(obj.pos[1]) || 6] : [0, 6],
           version: SAVE_VERSION,
           updatedAt: Date.now(),
@@ -1073,6 +1087,7 @@ export class Game {
     this.levelStartPlaytime = 0;
     this.zoneEnterPlaytime = 0;
     this.xpRate = this.pendingRate;
+    this.questState = {};
     this.inventory = new Inventory();
     this.equipment = new Equipment();
     this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
@@ -1095,6 +1110,7 @@ export class Game {
     const s = listChars().find((c) => c.id === id);
     if (!s) return;
     this.applySave(s);
+    this.checkLevelQuests(true);
     this.currentSaveId = s.id;
     this.sanctumHintShown = false;
     this.ultHintShown = false;
@@ -1122,6 +1138,10 @@ export class Game {
     this.xpRate = s.xpRate ?? 1;
     this.inventory.fromJSON(s.inventory, s.gold);
     this.equipment.fromJSON(s.equipment);
+    this.questState = {};
+    for (const [id, q] of Object.entries(s.quests ?? {})) {
+      this.questState[id] = { count: Math.max(0, q?.count ?? 0), claimed: !!q?.claimed };
+    }
     this.prevGear = { damage: 0, maxHp: 0, armor: 0, crit: 0, lifesteal: 0 };
     this.refreshGear();
     this.player.setWeaponModel(this.equipment.slots.weapon?.baseId ?? null);
@@ -1169,6 +1189,7 @@ export class Game {
       equipment: this.equipment.toJSON(),
       zoneId: this.currentZoneId,
       pos: [this.player.position.x, this.player.position.z],
+      quests: this.questState,
       version: SAVE_VERSION,
       updatedAt: Date.now(),
     };
@@ -1271,6 +1292,7 @@ export class Game {
     this.closePortal();
     this.closeStash();
     this.updateBossBar();
+    this.renderQuests();
     if (this.started) {
       this.showToast(`Entered ${def.name} — ${def.sub}`);
       this.autosave();
@@ -1454,6 +1476,7 @@ export class Game {
       else if (e.code === b.potion) this.tryPotion();
       else if (e.code === b.bag) this.toggleInventory();
       else if (e.code === b.char) this.toggleChar();
+      else if (e.code === b.quest) this.toggleQuest();
       else if (e.code === b.blink) this.tryBlink();
       else if (e.code === b.dodge) this.tryDodge();
       else if (e.code === b.interact) this.interact();
@@ -2300,29 +2323,112 @@ export class Game {
     }
 
     const leveled = this.player.gainXp(m.xpValue * this.xpRate);
-    if (leveled) {
-      this.logTelemetry('timeToLevel', `lv${this.player.level}`, this.playtime - this.levelStartPlaytime);
-      this.levelStartPlaytime = this.playtime;
-      this.numbers.spawn(this.player.position, 'LEVEL UP!', { color: '#ffd21f', crit: true, scale: 1.8 });
-      this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xffd21f, count: 24, speed: 5, life: 0.7, size: 1.1 });
-      this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 3.5);
-      this.fireMuzzle(this.player.position.x, 1.5, this.player.position.z, 0xffd21f);
-      this.flashScreen('#ffd21f', 0.25, 0.4);
-      this.sound.levelup();
-      this.showToast(`Level ${this.player.level}! +3 stat points (C) · Trader restocked · +1 potion`, 3.2);
-      this.player.potions = Math.min(5, this.player.potions + 1);
-      this.refreshShopStock();
-      this.renderShop();
-      this.renderChar();
-      this.hintSanctum();
-      if (this.ultUnlocked()) {
-        this.refreshSkillSlot3();
-        this.hintUlt();
-      }
-    }
+    if (leveled) this.celebrateLevelUp();
+    this.trackKill(m);
     this.updateBossBar();
     this.renderInventory();
     this.autosave();
+  }
+
+  /** Level-up fanfare + unlock checks (kill XP and quest XP share this path). */
+  private celebrateLevelUp(): void {
+    this.logTelemetry('timeToLevel', `lv${this.player.level}`, this.playtime - this.levelStartPlaytime);
+    this.levelStartPlaytime = this.playtime;
+    this.numbers.spawn(this.player.position, 'LEVEL UP!', { color: '#ffd21f', crit: true, scale: 1.8 });
+    this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xffd21f, count: 24, speed: 5, life: 0.7, size: 1.1 });
+    this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 3.5);
+    this.fireMuzzle(this.player.position.x, 1.5, this.player.position.z, 0xffd21f);
+    this.flashScreen('#ffd21f', 0.25, 0.4);
+    this.sound.levelup();
+    this.showToast(`Level ${this.player.level}! +3 stat points (C) · Trader restocked · +1 potion`, 3.2);
+    this.player.potions = Math.min(5, this.player.potions + 1);
+    this.refreshShopStock();
+    this.renderShop();
+    this.renderChar();
+    this.hintSanctum();
+    if (this.ultUnlocked()) {
+      this.refreshSkillSlot3();
+      this.hintUlt();
+    }
+    this.checkLevelQuests();
+  }
+
+  /** Quest XP (multi-level safe): celebrate each level gained. */
+  private grantXp(amount: number): void {
+    if (amount <= 0 || !this.player.alive) return;
+    if (this.player.gainXp(amount)) this.celebrateLevelUp();
+    let guard = 10;
+    while (guard-- > 0 && this.player.xp >= this.player.xpNext) {
+      if (this.player.gainXp(0)) this.celebrateLevelUp();
+      else break;
+    }
+  }
+
+  private questProgress(id: string): QuestProgress {
+    let p = this.questState[id];
+    if (!p) {
+      p = blankProgress();
+      this.questState[id] = p;
+    }
+    return p;
+  }
+
+  /** Kill tracking: slay counts per zone + boss kills. Completions pay out immediately. */
+  private trackKill(m: Monster): void {
+    let changed = false;
+    for (const def of QUESTS) {
+      const p = this.questProgress(def.id);
+      if (p.claimed) continue;
+      if (def.kind === 'slay' && !m.isBoss && def.zoneId === this.currentZoneId) {
+        p.count = Math.min(def.count ?? 1, p.count + 1);
+        changed = true;
+      } else if (def.kind === 'boss' && m.isBoss && def.zoneId === this.currentZoneId &&
+        (!def.boss || def.boss === m.displayName)) {
+        p.count = 1;
+        changed = true;
+      } else {
+        continue;
+      }
+      if (isComplete(def, p)) this.completeQuest(def);
+    }
+    if (changed) this.renderQuests();
+  }
+
+  /** Level quests (checked on every level-up; quiet catch-up on login). */
+  private checkLevelQuests(quiet = false): void {
+    for (const def of QUESTS) {
+      if (def.kind !== 'level') continue;
+      const p = this.questProgress(def.id);
+      if (p.claimed || this.player.level < (def.level ?? 1)) continue;
+      this.completeQuest(def, quiet);
+    }
+    this.renderQuests();
+  }
+
+  /** Pay out a completed quest: gold/XP/potions now, drops to bag or feet. */
+  private completeQuest(def: QuestDef, quiet = false): void {
+    this.questProgress(def.id).claimed = true;
+    const r = def.reward;
+    if (r.gold) this.inventory.gold += r.gold;
+    if (r.potions) this.player.potions = Math.min(5, this.player.potions + r.potions);
+    let dropped = false;
+    if (r.itemLevel) {
+      const it = generateDrop(r.itemLevel);
+      if (!this.inventory.add(it)) {
+        this.loot.spawnItem(this.player.position, it);
+        dropped = true;
+      }
+    }
+    this.renderInventory();
+    if (r.xp) this.grantXp(r.xp);
+    if (!quiet) {
+      this.numbers.spawn(this.player.position, `📜 ${def.name}!`, { color: '#7dffd4', crit: true, scale: 1.4 });
+      this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: 0x7dffd4, count: 14, speed: 4, life: 0.6, size: 0.9 });
+      this.sound.levelup();
+      this.showToast(`📜 Quest complete: ${def.icon} ${def.name} — ${rewardText(def)}${dropped ? ' (bag full — at your feet!)' : ''}`, 3.4);
+      this.autosave();
+    }
+    this.renderQuests();
   }
 
   /** Loot grabbed by clicking its crystal — bag space is checked before removal. */
@@ -2375,6 +2481,7 @@ export class Game {
     this.portalOpen = false;
     this.charOpen = false;
     this.stashOpen = false;
+    this.questOpen = false;
     this.closeJobModal();
     this.hideCompare();
     this.renderInventory();
@@ -2382,6 +2489,7 @@ export class Game {
     this.renderPortal();
     this.renderChar();
     this.renderStash();
+    this.renderQuests();
   }
 
   private togglePause(force?: boolean): void {
@@ -2397,7 +2505,7 @@ export class Game {
   }
 
   private anyUiOpen(): boolean {
-    return this.invOpen || this.shopOpen || this.portalOpen || this.charOpen || this.stashOpen ||
+    return this.invOpen || this.shopOpen || this.portalOpen || this.charOpen || this.stashOpen || this.questOpen ||
       this.elJobModal?.style.display === 'flex';
   }
 
@@ -2421,6 +2529,28 @@ export class Game {
   private closeStash(): void {
     this.stashOpen = false;
     this.renderStash();
+  }
+
+  private toggleQuest(force?: boolean): void {
+    this.questOpen = force ?? !this.questOpen;
+    this.sound.uiClick();
+    this.renderQuests();
+  }
+
+  /** Quest entries for builders: current-zone incomplete first, claimed last. */
+  private questEntries(): QuestEntry[] {
+    const rows = QUESTS.map((def) => ({ def, progress: this.questProgress(def.id) }));
+    const zoneRank = (def: QuestDef): number => (def.zoneId === undefined || def.zoneId === this.currentZoneId ? 0 : 1);
+    return rows.sort((a, b) => zoneRank(a.def) - zoneRank(b.def));
+  }
+
+  private renderQuests(): void {
+    if (this.elQuestPanel) this.elQuestPanel.style.display = this.questOpen ? 'block' : 'none';
+    if (this.elQuestList) this.elQuestList.innerHTML = questLogHtml(this.questEntries(), this.player.level);
+    if (this.elQuestTracker) {
+      const open = this.questEntries().filter((e) => !e.progress.claimed).slice(0, 3);
+      this.elQuestTracker.innerHTML = `<b>📋 Quests (J)</b>` + questTrackerHtml(open, this.player.level);
+    }
   }
 
   private renderStash(): void {

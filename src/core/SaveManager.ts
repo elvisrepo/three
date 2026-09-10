@@ -3,6 +3,7 @@
 import type { ItemInstance } from '../items/Items';
 import type { StarterClass, Attrs } from '../data/Classes';
 import type { EquipSlots } from '../items/Inventory';
+import type { QuestProgress } from '../data/Quests';
 
 export interface CharacterSave {
   id: string;
@@ -28,6 +29,8 @@ export interface CharacterSave {
   equipment: EquipSlots;
   zoneId: string;
   pos: [number, number];
+  /** Quest progress (optional — v1 saves predate quests and load empty). */
+  quests?: Record<string, QuestProgress>;
   version: number;
   updatedAt: number;
 }

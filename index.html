@@ -15,7 +15,7 @@
         <div id="hud-help" class="panel">
           <strong>ARPG — Phase 2 Loop</strong>
           <div><b>Click</b> monster: attack · ground: move · crystal: pick up</div>
-          <div><b>1</b> <span id="help-skill1">fireball</span> · <b>2</b> job skill (Lv10+) · <b>3</b> ultimate (Lv20+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character</div>
+          <div><b>1</b> <span id="help-skill1">fireball</span> · <b>2</b> job skill (Lv10+) · <b>3</b> ultimate (Lv20+) · <b>Q</b> potion · <b>I</b> bag · <b>C</b> character · <b>J</b> quests</div>
           <div><b>E</b> blink · <b>Space</b> dodge · <b>T</b> town portal · <b>F</b> talk/portal</div>
           <div><b>WASD</b> move · <b>wheel</b> zoom (out to 40) · hover gear to compare</div>
           <div>👑 on minimap = live boss · <b>M</b> mute · <b>Esc</b> pause/menu</div>
@@ -28,6 +28,7 @@
           <div class="row-btns"><button id="btn-save">💾 Save</button><button id="btn-chars">🔄 Heroes</button><button id="btn-mute">🔊</button></div>
         </div>
 
+        <div id="quest-tracker" class="panel"></div>
         <div id="hud-toast"></div>
         <div id="interact-prompt"></div>
         <canvas id="minimap" width="176" height="176" title="Minimap — click to move · 👑 is the boss"></canvas>
@@ -52,6 +53,7 @@
             <div class="skill" id="skill-potion" title="Potion (Q) — heal 45%">Q</div>
             <button class="skill btn" id="btn-char" title="Character (C)">👤</button>
             <button class="skill btn" id="btn-inv" title="Inventory (I)">🎒</button>
+            <button class="skill btn" id="btn-quest" title="Quest log (J)">📋</button>
           </div>
         </div>
 
@@ -85,6 +87,12 @@
           <div class="panel-head"><b>📦 Stash (shared)</b><button id="stash-close">✕</button></div>
           <div id="stash-grid"></div>
           <div class="dim pad">Click bag item: store · click stash item: take · walk away to close</div>
+        </div>
+
+        <div id="quest-panel" class="side-panel" style="display:none">
+          <div class="panel-head"><b>📋 Quest Log</b><button id="quest-close">✕</button></div>
+          <div id="quest-list"></div>
+          <div class="dim pad">Rewards pay out automatically — just play.</div>
         </div>
 
         <div id="pause-overlay" style="display:none">
