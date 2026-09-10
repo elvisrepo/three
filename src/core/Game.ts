@@ -3191,10 +3191,16 @@ export class Game {
         this.sound.roar();
         this.showToast('The boss calls for aid!', 2);
       }
+      for (const im of b.consumePortalImpacts()) {
+        this.effects.ring(im.x, im.z, 0xb44dff, 2.2, 0.4);
+        this.effects.burst(im.x, 1.0, im.z, { color: 0xffffff, count: 10, speed: 5, life: 0.4, size: 0.9 });
+        this.effects.scorch(im.x, im.z, 2);
+      }
       const portalDmg = b.consumePortalDamage();
       if (portalDmg > 0 && this.player.alive) {
         this.damagePlayer(portalDmg);
         this.camShake = Math.min(0.9, this.camShake + 0.4);
+        this.flashScreen('#b44dff', 0.2, 0.3);
         this.sound.bossSlam();
         this.showToast('🔮 Portal beams! Keep moving!', 2);
       }

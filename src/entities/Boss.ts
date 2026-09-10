@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Monster } from './Monster';
 import { MagmaAura } from './MagmaAura';
+import { getMoteTexture, getCircleTexture, getPillarTexture } from './SavePoint';
 
 /**
  * Boss extras via composition (Monster stays decoupled — it only exposes
@@ -13,8 +14,44 @@ import { MagmaAura } from './MagmaAura';
  */
 
 interface PortalBeam {
-  mesh: THREE.Mesh;
-  mat: THREE.MeshBasicMaterial;
+  group: THREE.Group;
+  mats: THREE.Material[];
+  life: number;
+  maxLife: number;
+  age: number;
+  phase: number;
+  len: number;
+  from: THREE.Vector3;
+  to: THREE.Vector3;
+  pulse: THREE.Sprite;
+}
+
+interface RiftMote {
+  sprite: THREE.Sprite;
+  mat: THREE.SpriteMaterial;
+  angle: number;
+  t: number;
+}
+
+/** Pooled rift dress: disc + rim + spinning rune + inhaled spark motes. */
+interface Rift {
+  group: THREE.Group;
+  discMat: THREE.MeshBasicMaterial;
+  rimMat: THREE.MeshBasicMaterial;
+  runeMat: THREE.MeshBasicMaterial;
+  rune: THREE.Mesh;
+  motes: RiftMote[];
+}
+
+/** Pooled lock mark: ground ring + brightening fill disc. */
+interface LockMark {
+  group: THREE.Group;
+  ringMat: THREE.MeshBasicMaterial;
+  fillMat: THREE.MeshBasicMaterial;
+}
+
+interface DyingRift {
+  rift: Rift;
   life: number;
 }
 
@@ -24,6 +61,7 @@ const PORTAL_CD = 9;
 const PORTAL_RANGE = 15;
 const PORTAL_BEAM_LIFE = 0.4;
 const PORTAL_BEAM_RADIUS = 1.4;
+const PORTAL_POP_LIFE = 0.18;
 export class BossController {
   telegraph: THREE.Mesh;
   slamRadius = 4.8;
@@ -37,13 +75,19 @@ export class BossController {
   private summoned = false;
   /** Portal barrage state (wilds boss only — enabled via opts). */
   private portalVolley = false;
-  private portals: THREE.Group[] = [];
-  private locks: THREE.Vector3[] = [];
-  private lockRings: THREE.Mesh[] = [];
+  private rifts: Rift[] = [];
+  private locks: LockMark[] = [];
+  private lockPoints: THREE.Vector3[] = [];
+  private dying: DyingRift[] = [];
+  private volleyActive = false;
   private portalT = 0;
   private portalCd = 6;
   private portalPending = 0;
+  private fxT = 0;
+  private portalImpacts: Array<{ x: number; z: number }> = [];
   private beams: PortalBeam[] = [];
+  /** Shared beam-flow texture (scrolls globally; per-beam materials fade). */
+  private beamTex: THREE.Texture | null = null;
 
   constructor(private scene: THREE.Scene, readonly boss: Monster, opts?: { magma?: boolean; portals?: boolean }) {
     this.telegraph = new THREE.Mesh(
@@ -68,6 +112,79 @@ export class BossController {
       boss.group.add(this.aura.group);
     }
     this.portalVolley = opts?.portals ?? false;
+    if (this.portalVolley) this.buildPortalDress();
+  }
+
+  /** Pre-allocate all volley visuals once (zero allocation during the fight). */
+  private buildPortalDress(): void {
+    const moteTex = getMoteTexture();
+    const circleTex = getCircleTexture();
+    this.beamTex = getPillarTexture().clone();
+    this.beamTex.needsUpdate = true;
+    this.beamTex.wrapS = this.beamTex.wrapT = THREE.RepeatWrapping;
+    this.beamTex.repeat.set(2, 3);
+    for (let i = 0; i < 3; i++) {
+      const discMat = new THREE.MeshBasicMaterial({
+        color: 0xb44dff, transparent: true, opacity: 0.5,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const rimMat = new THREE.MeshBasicMaterial({
+        color: 0xe0b3ff, transparent: true, opacity: 0.7,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const runeMat = new THREE.MeshBasicMaterial({
+        map: circleTex, color: 0xd9a7ff, transparent: true, opacity: 0.8,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const group = new THREE.Group();
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.85, 28), discMat);
+      disc.renderOrder = 24;
+      const rim = new THREE.Mesh(new THREE.RingGeometry(0.85, 1.08, 32), rimMat);
+      rim.position.z = 0.01;
+      rim.renderOrder = 25;
+      const rune = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 1.6), runeMat);
+      rune.position.z = 0.02;
+      rune.renderOrder = 26;
+      group.add(disc, rim, rune);
+      const motes: RiftMote[] = [];
+      for (let m = 0; m < 3; m++) {
+        const mat = new THREE.SpriteMaterial({
+          map: moteTex, color: 0xd9a7ff, transparent: true, opacity: 0,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        const sprite = new THREE.Sprite(mat);
+        sprite.scale.setScalar(0.3);
+        sprite.renderOrder = 27;
+        group.add(sprite);
+        motes.push({ sprite, mat, angle: (m / 3) * Math.PI * 2, t: m / 3 });
+      }
+      group.visible = false;
+      this.scene.add(group);
+      this.rifts.push({ group, discMat, rimMat, runeMat, rune, motes });
+    }
+    for (let i = 0; i < 3; i++) {
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xe0b3ff, transparent: true, opacity: 0.8,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const fillMat = new THREE.MeshBasicMaterial({
+        map: moteTex, color: 0xb44dff, transparent: true, opacity: 0.2,
+        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const group = new THREE.Group();
+      const ring = new THREE.Mesh(new THREE.RingGeometry(1.0, PORTAL_BEAM_RADIUS, 32), ringMat);
+      ring.rotation.x = -Math.PI / 2;
+      ring.renderOrder = 18;
+      const fill = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 2.8), fillMat);
+      fill.rotation.x = -Math.PI / 2;
+      fill.position.y = 0.01;
+      fill.renderOrder = 17;
+      group.add(ring, fill);
+      group.position.y = 0.07;
+      group.visible = false;
+      this.scene.add(group);
+      this.locks.push({ group, ringMat, fillMat });
+    }
   }
 
   reset(): void {
@@ -79,7 +196,9 @@ export class BossController {
     this.portalCd = 6;
     this.portalT = 0;
     this.portalPending = 0;
-    this.clearPortals();
+    this.portalImpacts = [];
+    this.volleyActive = false;
+    this.hideDress();
     this.clearBeams();
     if (this.aura) {
       this.aura.group.visible = true;
@@ -89,14 +208,15 @@ export class BossController {
 
   /** Returns slam damage to the player this frame (0 if none). */
   update(dt: number, playerPos: THREE.Vector3, playerAlive: boolean): number {
-    // Beam fade is pure visual — runs even as the boss dies.
-    this.updateBeams(dt);
+    // Beam fade + rift collapse are pure visual — run even as the boss dies.
+    this.updatePortalFx(dt);
     if (!this.boss.alive) {
       this.wasAlive = false;
       this.telegraph.visible = false;
       this.warnT = 0;
       if (this.aura) this.aura.group.visible = false;
-      this.clearPortals();
+      this.volleyActive = false;
+      this.hideDress();
       return 0;
     }
     if (!this.wasAlive && this.boss.alive) this.reset();
@@ -146,21 +266,35 @@ export class BossController {
 
   /**
    * Triple-rift volley: rifts track you for the first stretch, then LOCK —
-   * impact rings mark the snapshot while beams charge. Moving (or dashing)
-   * out of the rings during the lock dodges the beams entirely.
+   * filled impact rings mark the snapshot while beams charge. Moving (or
+   * dashing) out of the rings during the lock dodges the beams entirely.
    */
   private updatePortals(dt: number, playerPos: THREE.Vector3, playerAlive: boolean): void {
-    if (this.portals.length > 0) {
+    if (this.volleyActive) {
       this.portalT -= dt;
       const grow = Math.min(1, (PORTAL_WARN - Math.max(0, this.portalT)) * 4);
-      for (const g of this.portals) {
-        g.scale.setScalar(Math.max(0.2, grow));
-        g.lookAt(playerPos.x, g.position.y, playerPos.z);
-        for (const m of g.userData.mats as THREE.MeshBasicMaterial[]) {
-          m.opacity = 0.45 + Math.sin(performance.now() * 0.02) * 0.3;
+      for (const r of this.rifts) {
+        r.group.scale.setScalar(Math.max(0.2, grow));
+        r.group.lookAt(playerPos.x, r.group.position.y, playerPos.z);
+        const pulse = 0.45 + Math.sin(performance.now() * 0.02) * 0.3;
+        r.discMat.opacity = pulse;
+        r.rimMat.opacity = pulse + 0.2;
+        r.rune.rotation.z += dt * 3.5;
+        r.runeMat.opacity = 0.55 + Math.sin(performance.now() * 0.013) * 0.25;
+        for (const mo of r.motes) {
+          mo.t = (mo.t + dt * 2) % 1;
+          mo.angle += dt * 5;
+          const rad = 1.15 * (1 - mo.t) + 0.15;
+          mo.sprite.position.set(Math.cos(mo.angle) * rad, Math.sin(mo.angle) * rad, 0.1);
+          mo.mat.opacity = Math.sin(mo.t * Math.PI) * 0.9;
         }
       }
-      if (this.portalT <= PORTAL_LOCK && this.locks.length === 0) this.lockPortals(playerPos);
+      if (this.portalT <= PORTAL_LOCK && this.lockPoints.length === 0) this.lockPortals(playerPos);
+      const heat = this.lockPoints.length > 0 ? 1 - Math.max(0, this.portalT) / PORTAL_LOCK : 0;
+      for (const l of this.locks) {
+        l.fillMat.opacity = 0.2 + 0.6 * heat;
+        l.ringMat.opacity = 0.6 + 0.35 * Math.sin(performance.now() * (0.02 + heat * 0.03));
+      }
       if (this.portalT <= 0) this.firePortals(playerPos);
       return;
     }
@@ -174,69 +308,12 @@ export class BossController {
   private lockPortals(aim: THREE.Vector3): void {
     const [lx, lz] = this.bossLeft();
     const spreads = [-0.9, 0, 0.9];
-    for (const off of spreads) {
-      const at = new THREE.Vector3(aim.x + lx * off, 0.07, aim.z + lz * off);
-      this.locks.push(at.clone());
-      const mat = new THREE.MeshBasicMaterial({
-        color: 0xe0b3ff, transparent: true, opacity: 0.8,
-        side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-      });
-      const ring = new THREE.Mesh(new THREE.RingGeometry(1.0, PORTAL_BEAM_RADIUS, 32), mat);
-      ring.rotation.x = -Math.PI / 2;
-      ring.position.copy(at);
-      ring.renderOrder = 18;
-      this.scene.add(ring);
-      this.lockRings.push(ring);
+    for (let i = 0; i < this.locks.length; i++) {
+      const at = new THREE.Vector3(aim.x + lx * spreads[i], 0.07, aim.z + lz * spreads[i]);
+      this.lockPoints.push(at);
+      this.locks[i].group.position.set(at.x, 0.07, at.z);
+      this.locks[i].group.visible = true;
     }
-  }
-
-  /** Three rifts: above + boss-left + boss-right (boss-local axes). */
-  private openPortals(): void {
-    const yaw = this.boss.group.rotation.y;
-    const fx = Math.sin(yaw);
-    const fz = Math.cos(yaw);
-    // Facing +Z, left hand sits at +X.
-    const lx = fz;
-    const lz = -fx;
-    const bp = this.boss.position;
-    const spots = [
-      new THREE.Vector3(bp.x, 3.6, bp.z),
-      new THREE.Vector3(bp.x + lx * 2.6, 1.6, bp.z + lz * 2.6),
-      new THREE.Vector3(bp.x - lx * 2.6, 1.6, bp.z - lz * 2.6),
-    ];
-    for (const at of spots) {
-      const g = new THREE.Group();
-      const mats: THREE.MeshBasicMaterial[] = [];
-      const disc = new THREE.Mesh(
-        new THREE.CircleGeometry(0.85, 28),
-        new THREE.MeshBasicMaterial({
-          color: 0xb44dff, transparent: true, opacity: 0.5,
-          side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-        }),
-      );
-      const rim = new THREE.Mesh(
-        new THREE.RingGeometry(0.85, 1.05, 32),
-        new THREE.MeshBasicMaterial({
-          color: 0xe0b3ff, transparent: true, opacity: 0.7,
-          side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-        }),
-      );
-      rim.position.z = 0.01;
-      mats.push(
-        disc.material as THREE.MeshBasicMaterial,
-        rim.material as THREE.MeshBasicMaterial,
-      );
-      disc.renderOrder = 24;
-      rim.renderOrder = 25;
-      g.add(disc, rim);
-      g.position.copy(at);
-      g.scale.setScalar(0.2);
-      g.userData.mats = mats;
-      this.scene.add(g);
-      this.portals.push(g);
-    }
-    this.portalT = PORTAL_WARN;
-    this.boss.playSpecial('slam');
   }
 
   /** Boss-left unit vector (facing +Z, left hand sits at +X). */
@@ -245,32 +322,100 @@ export class BossController {
     return [Math.cos(yaw), -Math.sin(yaw)];
   }
 
-  /** Fire at the LOCKED impacts (empty = boss died mid-warn: fizzle silently). */
+  /** Three rifts: above + boss-left + boss-right (boss-local axes). */
+  private openPortals(): void {
+    const [lx, lz] = this.bossLeft();
+    const bp = this.boss.position;
+    const spots = [
+      new THREE.Vector3(bp.x, 3.6, bp.z),
+      new THREE.Vector3(bp.x + lx * 2.6, 1.6, bp.z + lz * 2.6),
+      new THREE.Vector3(bp.x - lx * 2.6, 1.6, bp.z - lz * 2.6),
+    ];
+    for (let i = 0; i < this.rifts.length; i++) {
+      const r = this.rifts[i];
+      r.group.position.copy(spots[i]);
+      r.group.scale.setScalar(0.2);
+      r.group.visible = true;
+      r.discMat.opacity = 0.5;
+      r.rimMat.opacity = 0.7;
+      r.runeMat.opacity = 0.8;
+      for (let m = 0; m < r.motes.length; m++) {
+        r.motes[m].t = m / r.motes.length;
+        r.motes[m].angle = (m / r.motes.length) * Math.PI * 2;
+      }
+    }
+    this.lockPoints = [];
+    this.portalT = PORTAL_WARN;
+    this.volleyActive = true;
+    this.boss.playSpecial('slam');
+  }
+
+  /** Fire at the LOCKED impacts: twin core+halo beams, banked hits + impacts. */
   private firePortals(now: THREE.Vector3): void {
-    for (let i = 0; i < this.portals.length; i++) {
-      const from = this.portals[i].position;
-      const lock = this.locks[i % Math.max(1, this.locks.length)] ?? now;
+    for (let i = 0; i < this.rifts.length; i++) {
+      const from = this.rifts[i].group.position;
+      const lock = this.lockPoints[i] ?? now;
       const to = new THREE.Vector3(lock.x, 0.9, lock.z);
       const len = from.distanceTo(to);
-      if (len > 0.01) {
-        const mat = new THREE.MeshBasicMaterial({
-          color: 0xe0b3ff, transparent: true, opacity: 0.95,
+      if (len > 0.01 && this.beamTex) {
+        const haloMat = new THREE.MeshBasicMaterial({
+          map: this.beamTex, color: 0xb44dff, transparent: true, opacity: 0.75,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        });
+        const coreMat = new THREE.MeshBasicMaterial({
+          map: this.beamTex, color: 0xffffff, transparent: true, opacity: 1.0,
+          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+        });
+        const beamGroup = new THREE.Group();
+        const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.4, len, 12, 1, true), haloMat);
+        halo.rotation.x = Math.PI / 2;
+        halo.renderOrder = 26;
+        const core = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.15, len, 10, 1, true), coreMat);
+        core.rotation.x = Math.PI / 2;
+        core.renderOrder = 27;
+        const mouthMat = new THREE.SpriteMaterial({
+          map: getMoteTexture(), color: 0xe0b3ff, transparent: true, opacity: 1,
           blending: THREE.AdditiveBlending, depthWrite: false,
         });
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, len), mat);
-        beam.position.copy(from).add(to).multiplyScalar(0.5);
-        beam.lookAt(to);
-        beam.renderOrder = 26;
-        this.scene.add(beam);
-        this.beams.push({ mesh: beam, mat, life: PORTAL_BEAM_LIFE });
+        const mouth = new THREE.Sprite(mouthMat);
+        mouth.scale.setScalar(2.4);
+        mouth.position.z = -len / 2;
+        mouth.renderOrder = 28;
+        const pulseMat = new THREE.SpriteMaterial({
+          map: getMoteTexture(), color: 0xffffff, transparent: true, opacity: 1,
+          blending: THREE.AdditiveBlending, depthWrite: false,
+        });
+        const pulse = new THREE.Sprite(pulseMat);
+        pulse.scale.setScalar(1.5);
+        pulse.position.z = -len / 2;
+        pulse.renderOrder = 28;
+        beamGroup.add(halo, core, mouth, pulse);
+        beamGroup.position.copy(from).add(to).multiplyScalar(0.5);
+        beamGroup.lookAt(to);
+        beamGroup.scale.set(1, 1, 0.01);
+        this.scene.add(beamGroup);
+        this.beams.push({
+          group: beamGroup, mats: [haloMat, coreMat, mouthMat, pulseMat],
+          life: PORTAL_BEAM_LIFE, maxLife: PORTAL_BEAM_LIFE, age: 0,
+          phase: Math.random() * 10, len, from: from.clone(), to: to.clone(), pulse,
+        });
       }
       const dx = now.x - lock.x;
       const dz = now.z - lock.z;
       if (dx * dx + dz * dz < PORTAL_BEAM_RADIUS * PORTAL_BEAM_RADIUS) {
         this.portalPending += Math.max(1, Math.round(this.boss.damage * 1.0));
       }
+      this.portalImpacts.push({ x: lock.x, z: lock.z });
     }
-    this.clearPortals();
+    // Rifts collapse with a pop instead of blinking out.
+    for (const r of this.rifts) {
+      r.group.visible = false;
+      this.dying.push({ rift: r, life: PORTAL_POP_LIFE });
+      r.group.visible = true;
+    }
+    for (const l of this.locks) l.group.visible = false;
+    this.lockPoints = [];
+    this.volleyActive = false;
     this.portalCd = PORTAL_CD;
   }
 
@@ -281,46 +426,79 @@ export class BossController {
     return d;
   }
 
-  private updateBeams(dt: number): void {
+  /** Drain impact points for Game-side detonation FX (rings, bursts, scorch). */
+  consumePortalImpacts(): Array<{ x: number; z: number }> {
+    const out = this.portalImpacts;
+    this.portalImpacts = [];
+    return out;
+  }
+
+  private updatePortalFx(dt: number): void {
+    this.fxT += dt;
+    if (this.beamTex) this.beamTex.offset.y -= dt * 2.6;
     for (let i = this.beams.length - 1; i >= 0; i--) {
       const b = this.beams[i];
       b.life -= dt;
-      b.mat.opacity = Math.max(0, (b.life / PORTAL_BEAM_LIFE)) * 0.95;
+      b.age += dt;
+      const k = Math.max(0, b.life / b.maxLife);
+      b.group.scale.set(1, 1, Math.max(0.01, Math.min(1, b.age * 12)));
+      const flick = 0.82 + 0.28 * Math.sin(this.fxT * 47 + b.phase) * Math.sin(this.fxT * 31 + b.phase * 1.7);
+      const wob = 1 + 0.16 * Math.sin(this.fxT * 39 + b.phase);
+      b.group.scale.x = wob;
+      b.group.scale.y = wob;
+      const haloMat = b.mats[0] as THREE.MeshBasicMaterial;
+      const coreMat = b.mats[1] as THREE.MeshBasicMaterial;
+      const mouthMat = b.mats[2] as THREE.SpriteMaterial;
+      const pulseMat = b.mats[3] as THREE.SpriteMaterial;
+      haloMat.opacity = 0.75 * k * flick;
+      coreMat.opacity = k * flick;
+      mouthMat.opacity = Math.max(0, 1 - b.age * 5);
+      pulseMat.opacity = k;
+      b.pulse.position.z = -b.len / 2 + b.len * Math.min(1, b.age / (b.maxLife * 0.8));
       if (b.life <= 0) {
-        this.scene.remove(b.mesh);
-        b.mesh.geometry.dispose();
-        b.mat.dispose();
+        this.scene.remove(b.group);
+        b.group.traverse((o) => {
+          const mesh = o as THREE.Mesh;
+          if (mesh.isMesh) mesh.geometry.dispose();
+        });
+        for (const m of b.mats) m.dispose();
         this.beams.splice(i, 1);
+      }
+    }
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const d = this.dying[i];
+      d.life -= dt;
+      const k = Math.max(0, d.life / PORTAL_POP_LIFE);
+      d.rift.group.scale.setScalar(1 + (1 - k) * 0.45);
+      d.rift.discMat.opacity = 0.5 * k;
+      d.rift.rimMat.opacity = 0.7 * k;
+      d.rift.runeMat.opacity = 0.8 * k;
+      for (const mo of d.rift.motes) mo.mat.opacity = 0.9 * k;
+      if (d.life <= 0) {
+        d.rift.group.visible = false;
+        d.rift.group.scale.setScalar(1);
+        this.dying.splice(i, 1);
       }
     }
   }
 
-  private clearPortals(): void {
-    for (const r of this.lockRings) {
-      this.scene.remove(r);
-      r.geometry.dispose();
-      (r.material as THREE.Material).dispose();
-    }
-    this.lockRings = [];
-    this.locks = [];
-    for (const g of this.portals) {
-      this.scene.remove(g);
-      g.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        if (mesh.isMesh) {
-          mesh.geometry.dispose();
-          (mesh.material as THREE.Material).dispose();
-        }
-      });
-    }
-    this.portals = [];
+  /** Hide all pooled dress (zone change, death, reset). */
+  private hideDress(): void {
+    for (const r of this.rifts) r.group.visible = false;
+    for (const l of this.locks) l.group.visible = false;
+    this.dying = [];
+    this.lockPoints = [];
+    this.volleyActive = false;
   }
 
   private clearBeams(): void {
     for (const b of this.beams) {
-      this.scene.remove(b.mesh);
-      b.mesh.geometry.dispose();
-      b.mat.dispose();
+      this.scene.remove(b.group);
+      b.group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) mesh.geometry.dispose();
+      });
+      for (const m of b.mats) m.dispose();
     }
     this.beams = [];
   }
@@ -338,5 +516,29 @@ export class BossController {
     this.telegraph.geometry.dispose();
     (this.telegraph.material as THREE.Material).dispose();
     this.aura?.dispose();
+    this.beamTex?.dispose();
+    this.beamTex = null;
+    for (const r of this.rifts) {
+      this.scene.remove(r.group);
+      r.group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) mesh.geometry.dispose();
+      });
+      r.discMat.dispose();
+      r.rimMat.dispose();
+      r.runeMat.dispose();
+      for (const mo of r.motes) mo.mat.dispose();
+    }
+    this.rifts = [];
+    for (const l of this.locks) {
+      this.scene.remove(l.group);
+      l.group.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (mesh.isMesh) mesh.geometry.dispose();
+      });
+      l.ringMat.dispose();
+      l.fillMat.dispose();
+    }
+    this.locks = [];
   }
 }
