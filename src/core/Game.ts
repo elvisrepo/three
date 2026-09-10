@@ -35,6 +35,7 @@ import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Ke
 import { StateMachine, GameState } from './StateMachine';
 import { compareHtml } from '../ui/compare';
 import { QUESTS, isComplete, blankProgress, rewardText, type QuestDef, type QuestProgress } from '../data/Quests';
+import { ELITE_XP_MULT, ELITE_SCALE, rollElite, type EliteRoll } from '../data/Elites';
 import { questLogHtml, questTrackerHtml, type QuestEntry } from '../ui/quests';
 import { gearStatsText, equipRowHtml, invGridHtml } from '../ui/inventory';
 import { shopStockHtml } from '../ui/shop';
@@ -138,6 +139,8 @@ export class Game {
   private dummies: THREE.Object3D[] = [];
   private monsters: Monster[] = [];
   private bossCtrls: BossController[] = [];
+  /** Elite (champion) trash — same objects as monsters, upgraded at spawn. Cleared on loadZone. */
+  private elites = new Set<Monster>();
   private pendingAoe: PendingAoe[] = [];
   /** Per-hazard countdowns for the current zone (rebuilt on loadZone). */
   private hazardTimers: number[] = [];
@@ -1249,6 +1252,7 @@ export class Game {
     this.meteorFx.stopAll();
     this.monsters = [];
     this.bossCtrls = [];
+    this.elites.clear();
     this.loot.clear();
     this.pickupUid = null;
     this.player.clearAttackTarget();
@@ -1317,6 +1321,8 @@ export class Game {
   private spawnZoneMonsters(def: ZoneDef): void {
     if (!def.monsters) return;
     const [sx, sz] = def.spawn;
+    let eliteCount = 0;
+    const trash: Monster[] = [];
     for (let i = 0; i < def.monsters.count; i++) {
       const a = Math.random() * Math.PI * 2;
       const r = 9 + Math.random() * 15;
@@ -1330,11 +1336,47 @@ export class Game {
         z = THREE.MathUtils.clamp(z + 9, -27, 27);
       }
       const level = randi(def.monsters.levelMin, def.monsters.levelMax);
-      const m = new Monster(new THREE.Vector3(x, 0, z), level, { tint: def.monsterTint, species: def.monsterSpecies });
+      const elite = rollElite(level);
+      const m = new Monster(new THREE.Vector3(x, 0, z), level, {
+        tint: def.monsterTint,
+        species: def.monsterSpecies,
+        hpMult: elite?.hpMult,
+        dmgMult: elite?.dmgMult,
+        xpMult: elite ? ELITE_XP_MULT : 1,
+        name: elite ? `Elite ${elite.titles.join(' ')}` : undefined,
+      });
+      if (elite) {
+        this.applyElite(m, elite);
+        eliteCount++;
+      }
       m.group.userData.monster = m;
       this.monsters.push(m);
+      trash.push(m);
       this.scene.add(m.group);
     }
+    // Guarantee at least one elite per zone so the mechanic always shows up.
+    if (eliteCount === 0 && trash.length > 0) {
+      const m = trash[Math.floor(Math.random() * trash.length)];
+      // Rebuild as elite via mults on top of current stats (no respawn reset).
+      const forced = rollElite(m.level, true);
+      if (forced) {
+        m.maxHp = m.hp = Math.round(m.maxHp * forced.hpMult);
+        m.damage = Math.round(m.damage * forced.dmgMult);
+        m.xpValue = Math.round(m.xpValue * ELITE_XP_MULT);
+        m.displayName = `Elite ${forced.titles.join(' ')}`;
+        this.applyElite(m, forced);
+      }
+    }
+  }
+
+  /** Elite dressing: size, speed mult, gold aggro ring, kill-set membership. */
+  private applyElite(m: Monster, elite: EliteRoll): void {
+    m.speed *= elite.speedMult;
+    // Group-scale (not ctor scale: that only grows the goblin rig, not capsules).
+    m.group.scale.multiplyScalar(ELITE_SCALE);
+    const ring = m.group.getObjectByName('aggroRing') as THREE.Mesh | undefined;
+    if (ring) (ring.material as THREE.MeshBasicMaterial).color.setHex(0xffd21f);
+    this.elites.add(m);
   }
 
   private spawnBoss(def: ZoneDef): void {
@@ -2394,6 +2436,16 @@ export class Game {
       this.loot.spawnItem(m.position, makeTpScroll());
       this.showToast(`👑 ${m.displayName || 'Boss'} slain! Guaranteed loot — grab the crystals!`, 3.2);
       this.logTelemetry('bossKill', this.currentZoneId, this.playtime - this.zoneEnterPlaytime);
+    } else if (this.elites.has(m)) {
+      // Elite: guaranteed min-magic drop + bonus gold, boss-lite dopamine.
+      const r = Math.random();
+      const force = r < 0.05 ? 'legendary' : r < 0.28 ? 'rare' : 'magic';
+      this.loot.spawnItem(m.position, generateDrop(this.player.level, 0, force));
+      if (Math.random() < 0.25) this.loot.spawnItem(m.position, generateDrop(this.player.level));
+      const bonus = randi(6, 12) + m.level * 2;
+      this.inventory.gold += bonus;
+      this.numbers.spawn(m.position, `+${bonus}g`, { color: '#ffd479', scale: 1.1 });
+      this.showToast(`⚔️ ${m.displayName || 'Elite'} slain — bonus loot!`, 2.4);
     } else {
       if (Math.random() < 0.09) this.loot.spawnItem(m.position, generateDrop(this.player.level));
       if (Math.random() < 0.05) this.loot.spawnItem(m.position, makeTpScroll());
@@ -3077,10 +3129,10 @@ export class Game {
         if (dx * dx + dz * dz < 1.7 * 1.7 && drop.age >= PICKUP_DELAY) {
           this.pickupUid = null;
           this.player.stop();
-          if (this.inventory.add(drop.item)) {
-            this.loot.removeDrop(drop.item.uid);
-            this.onLootPickup(drop.item);
-          } else {
+            if (this.inventory.add(drop.item)) {
+              this.loot.removeDrop(drop.item.uid);
+              this.onLootPickup(drop.item);
+            } else {
             this.showToast('Inventory full! Press I to manage gear.');
           }
         }
@@ -3484,13 +3536,13 @@ export class Game {
       ctx.closePath();
       ctx.fill();
     }
-    // Trash monsters
-    ctx.fillStyle = '#c07bff';
+    // Trash monsters (elites get a gold dot)
     for (const m of this.monsters) {
       if (!m.alive || m.isBoss) continue;
       const [mx, mz] = toMap(m.position.x, m.position.z);
+      ctx.fillStyle = this.elites.has(m) ? '#ffd21f' : '#c07bff';
       ctx.beginPath();
-      ctx.arc(mx, mz, 2, 0, Math.PI * 2);
+      ctx.arc(mx, mz, this.elites.has(m) ? 3 : 2, 0, Math.PI * 2);
       ctx.fill();
     }
     // Boss: pulsing red marker + crown (drawn last, on top)
