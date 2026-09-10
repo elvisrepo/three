@@ -117,6 +117,8 @@ interface PendingAoe {
   /** quarks pilot: meteor streak column handle + impact flag (fire only). */
   meteor: boolean;
   qFall: QuarksSystem | null;
+  /** Fraction of player max HP dealt on detonation (zone hazards). */
+  hurtPct: number;
 }
 
 export class Game {
@@ -137,6 +139,8 @@ export class Game {
   private monsters: Monster[] = [];
   private bossCtrls: BossController[] = [];
   private pendingAoe: PendingAoe[] = [];
+  /** Per-hazard countdowns for the current zone (rebuilt on loadZone). */
+  private hazardTimers: number[] = [];
 
   private numbers!: DamageNumbers;
   private effects!: Effects;
@@ -1260,7 +1264,7 @@ export class Game {
 
     this.scene.background = new THREE.Color(def.fogColor);
     (this.scene.fog as THREE.Fog).color.setHex(def.fogColor);
-    const mood = def.id === 'ember' ? 'ember' : def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : 'city';
+    const mood = def.id === 'ember' ? 'ember' : def.id === 'crypt' ? 'crypt' : def.id === 'meadow' ? 'meadow' : def.id === 'wilds' ? 'wilds' : 'city';
     this.sound.setMood(mood);
     this.groundMat.color.setHex(def.groundColor);
     for (const w of this.wallMats) w.color.setHex(def.wallColor);
@@ -1279,6 +1283,8 @@ export class Game {
 
     if (def.monsters) this.spawnZoneMonsters(def);
     if (def.boss) this.spawnBoss(def);
+    const hazards = def.hazards ?? [];
+    this.hazardTimers = hazards.map((h, i) => h.period * (0.3 + (0.7 * (i + 1)) / Math.max(1, hazards.length)));
     if (def.hasShop) {
       this.refreshShopStock();
       this.renderShop();
@@ -1333,7 +1339,7 @@ export class Game {
 
   private spawnBoss(def: ZoneDef): void {
     if (!def.boss) return;
-    const tint = def.id === 'crypt' ? 0x7b2ff7 : def.id === 'ember' ? 0xff5a1f : 0xb81f2d;
+    const tint = def.id === 'crypt' ? 0x7b2ff7 : def.id === 'ember' ? 0xff5a1f : def.id === 'wilds' ? 0x7b5cff : 0xb81f2d;
     const boss = new Monster(new THREE.Vector3(def.bossPos[0], 0, def.bossPos[1]), def.boss.level, {
       hpMult: 6,
       dmgMult: 1.4,
@@ -2258,7 +2264,7 @@ export class Game {
     c.start(hx, 1.4, hz, color, dur, () => this.fireMuzzle(hx, 1.4, hz, color));
   }
 
-  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string; meteor?: boolean }): PendingAoe {
+  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string; meteor?: boolean; hurtPct?: number }): PendingAoe {
     const mesh = new THREE.Mesh(
       new THREE.RingGeometry(Math.max(0.1, radius - 0.4), radius, 40),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
@@ -2266,9 +2272,23 @@ export class Game {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.05, z);
     this.scene.add(mesh);
-    const entry: PendingAoe = { x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh, meteor: opts?.meteor ?? false, qFall: null };
+    const entry: PendingAoe = { x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh, meteor: opts?.meteor ?? false, qFall: null, hurtPct: opts?.hurtPct ?? 0 };
     this.pendingAoe.push(entry);
     return entry;
+  }
+
+  /** Zone hazards: re-arming curse vents (Howling Wilds gauntlet). Frozen on death. */
+  private updateHazards(dt: number): void {
+    const hazards = zoneById(this.currentZoneId).hazards;
+    if (!hazards || hazards.length === 0 || !this.player.alive) return;
+    for (let i = 0; i < hazards.length; i++) {
+      this.hazardTimers[i] -= dt;
+      if (this.hazardTimers[i] <= 0) {
+        const h = hazards[i];
+        this.hazardTimers[i] = h.period;
+        this.queueAoe(h.x, h.z, h.radius, h.damage, 0, h.warn, h.color, { hurtPct: h.pct });
+      }
+    }
   }
 
   private updatePendingAoe(dt: number): void {
@@ -2288,6 +2308,14 @@ export class Game {
       if (a.qFall) this.meteorFx.stopFall(a.qFall);
       if (a.meteor) this.meteorFx.impact(a.x, a.z);
       if (a.scorch) this.effects.scorch(a.x, a.z, a.radius);
+      if (a.hurtPct > 0 && this.player.alive) {
+        const pdx = this.player.position.x - a.x;
+        const pdz = this.player.position.z - a.z;
+        if (pdx * pdx + pdz * pdz < a.radius * a.radius) {
+          this.damagePlayer(Math.max(1, Math.round(this.player.maxHp * a.hurtPct)));
+          this.showToast('💜 Cursed ground! Keep moving!', 1.6);
+        }
+      }
       if (a.flash) this.flashScreen(a.flash);
       if (a.sfx === 'slam') this.sound.bossSlam();
       this.camShake = Math.min(0.9, this.camShake + 0.45);
@@ -3205,6 +3233,7 @@ export class Game {
     }
 
     // Projectiles + delayed blasts + loot + floaters
+    this.updateHazards(dt);
     this.updatePendingAoe(dt);
     this.projectiles.update(
       dt,

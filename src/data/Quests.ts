@@ -82,6 +82,18 @@ export const QUESTS: QuestDef[] = [
     kind: 'boss', zoneId: 'ember', boss: 'Cinder Tyrant',
     reward: { gold: 1200, xp: 1500, itemLevel: 25 },
   },
+  {
+    id: 'wilds_cull', name: 'Wilds Cull', icon: '❄️',
+    desc: 'Slay 18 monsters in the Howling Wilds.',
+    kind: 'slay', zoneId: 'wilds', count: 18,
+    reward: { gold: 1200, xp: 1500 },
+  },
+  {
+    id: 'wilds_boss', name: 'Hornfather Falls', icon: '🦌',
+    desc: 'Slay the Hornfather in the Howling Wilds.',
+    kind: 'boss', zoneId: 'wilds', boss: 'The Hornfather',
+    reward: { gold: 2500, xp: 3000, itemLevel: 35 },
+  },
 ];
 
 export function questById(id: string): QuestDef | null {

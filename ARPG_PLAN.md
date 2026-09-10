@@ -417,7 +417,7 @@ Things offered or noticed but deliberately not built yet. Check here before prop
 ### Deferred features (all scoped, none started)
 - **Minimap click-to-move** — done (canvas `pointerdown` → world coords → `setTarget` in `Game.ts` `cacheHud`).
 - **Second advancement (Lv20)** — done (6 ults on key `3`, auto-unlock; see `Jobs.ts` + `castUlt`).
-- **Zone 4 (Lv 30–40)** — append one object to `ZONES` (Zone 3 Ember Wastes 20–30 + Cinder Tyrant done).
+- **Zone 4 (Lv 30–40)** — done (Howling Wilds + The Hornfather + curse-vent hazard gauntlet, `ZoneHazard` in `Zones.ts`; wilds quests in).
 - **QoL pack** — done (Esc pause menu, volume slider, remappable keys in `Keybinds.ts`, shared stash chest).
 - **Quests** — done (8 quests: zone culls + bosses + Lv10/20, auto-payout gold/XP/potions/drops; `src/data/Quests.ts`, log on `J`, tracker HUD, state on save).
 - **Composed music** — generative ambient is a placeholder; `SoundManager.setMood` is the seam for streamed tracks.

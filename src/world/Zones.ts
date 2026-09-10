@@ -13,6 +13,19 @@ export interface BossDef {
   level: number;
 }
 
+/** Recurring environmental hazard: warns for `warn` sec, then detonates.
+ *  Hurts monsters (flat `damage`) AND the player (`pct` of max HP) — dodge it. */
+export interface ZoneHazard {
+  x: number;
+  z: number;
+  radius: number;
+  damage: number;
+  pct: number;
+  period: number;
+  warn: number;
+  color: number;
+}
+
 export interface ZoneDef {
   id: string;
   name: string;
@@ -29,6 +42,7 @@ export interface ZoneDef {
   bossModel?: string;
   monsters: MonsterPack | null;
   boss: BossDef | null;
+  hazards?: ZoneHazard[];
   hasShop: boolean;
   hasPortal: boolean;
   /** Where the player appears on entering. */
@@ -130,6 +144,38 @@ export const ZONES: ZoneDef[] = [
     sanctumPos: [0, 0],
     chestPos: [0, 0],
     fountainPos: [0, 0],
+  },
+  {
+    id: 'wilds',
+    name: 'Howling Wilds',
+    sub: 'Lv 30–40 · dodge the curse vents',
+    minLevel: 30,
+    groundColor: 0x46536a,
+    fogColor: 0x0a0e1a,
+    wallColor: 0x232c3d,
+    monsterTint: 0xcfe3f5,
+    monsterSpecies: 'goblin',
+    monsters: { count: 14, levelMin: 30, levelMax: 34 },
+    boss: { name: 'The Hornfather', level: 35 },
+    bossModel: 'models/boss/wilds',
+    hasShop: false,
+    hasPortal: false,
+    spawn: [0, 18],
+    shopPos: [0, 0],
+    portalPos: [0, 0],
+    bossPos: [0, -18],
+    sanctumPos: [0, 0],
+    chestPos: [0, 0],
+    fountainPos: [0, 0],
+    // Gauntlet: staggered curse vents from entry to the arena + arena flanks.
+    hazards: [
+      { x: -4, z: 10, radius: 2.6, damage: 120, pct: 0.16, period: 3.4, warn: 1.0, color: 0xb44dff },
+      { x: 4, z: 4, radius: 2.6, damage: 120, pct: 0.16, period: 3.8, warn: 1.0, color: 0xb44dff },
+      { x: -4, z: -2, radius: 3.0, damage: 120, pct: 0.16, period: 4.2, warn: 1.0, color: 0xb44dff },
+      { x: 4, z: -8, radius: 3.0, damage: 120, pct: 0.16, period: 3.6, warn: 1.0, color: 0xb44dff },
+      { x: -6, z: -14, radius: 3.2, damage: 150, pct: 0.18, period: 4.0, warn: 1.0, color: 0xb44dff },
+      { x: 6, z: -14, radius: 3.2, damage: 150, pct: 0.18, period: 4.4, warn: 1.0, color: 0xb44dff },
+    ],
   },
 ];
 
