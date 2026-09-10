@@ -1299,7 +1299,10 @@ export class Game {
       this.hintSanctum();
       this.hintUlt();
     }
-    if (def.id === 'city') this.maybeSpawnCityAxe();
+    if (def.id === 'city') {
+      this.maybeSpawnCityAxe();
+      this.maybeSpawnCityBow();
+    }
     this.refreshSkillSlot1();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
@@ -1392,6 +1395,40 @@ export class Game {
     this.tmpVec.set(-5.5, 0, 2);
     this.loot.spawnItem(this.tmpVec, axe);
     if (this.started) this.showToast('🪓 A woodsman axe lies near the Trader — click it!');
+  }
+
+  private static readonly BOW_GIFT_KEY = 'arpg.gifts.bow.v1';
+
+  private bowGiftClaimed(): boolean {
+    if (!this.currentSaveId) return true;
+    try {
+      const raw = localStorage.getItem(Game.BOW_GIFT_KEY);
+      const claimed = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+      return claimed[this.currentSaveId] === true;
+    } catch {
+      return false;
+    }
+  }
+
+  private markBowGiftClaimed(): void {
+    if (!this.currentSaveId) return;
+    try {
+      const raw = localStorage.getItem(Game.BOW_GIFT_KEY);
+      const claimed = raw ? (JSON.parse(raw) as Record<string, boolean>) : {};
+      claimed[this.currentSaveId] = true;
+      localStorage.setItem(Game.BOW_GIFT_KEY, JSON.stringify(claimed));
+    } catch {
+      /* gift flag never blocks gameplay */
+    }
+  }
+
+  /** One-time Short Bow gift per archer hero, lying near the Trader. */
+  private maybeSpawnCityBow(): void {
+    if (!this.currentSaveId || this.player.baseClass !== 'archer' || this.bowGiftClaimed()) return;
+    const bow = buildItemById('short_bow', Math.max(1, this.player.level), 'normal');
+    this.tmpVec.set(-8.5, 0, -2);
+    this.loot.spawnItem(this.tmpVec, bow);
+    if (this.started) this.showToast('🏹 A short bow lies near the Trader — click it!');
   }
 
   private refreshShopStock(): void {
@@ -1713,15 +1750,18 @@ export class Game {
     if (this.tmpVec.lengthSq() < 1e-6) return;
     this.tmpVec.normalize();
     if (!this.spendSkillMana(FIREBALL_COST)) return;
+    const archerShot = this.player.baseClass === 'archer';
+    const shotColor = archerShot ? 0x5dff6b : 0xff6a00;
     this.projectiles.fire(
       this.player.position,
       this.tmpVec,
       this.effDmg(this.player.attackDamage) * FIREBALL_MULT * this.player.fireMult,
       16,
       18,
-      undefined,
-      0xff6a00,
+      archerShot ? shotColor : undefined,
+      shotColor,
       FIREBALL_SIPHON,
+      archerShot,
     );
     this.player.faceInstant(this.tmpVec.clone().add(this.player.position));
     this.player.swingAnim = 1;
@@ -1731,13 +1771,13 @@ export class Game {
       this.player.position.x + this.tmpVec.x * 0.7,
       1.3,
       this.player.position.z + this.tmpVec.z * 0.7,
-      0xff6a00,
+      shotColor,
     );
     this.effects.burst(
       this.player.position.x + this.tmpVec.x,
       1.3,
       this.player.position.z + this.tmpVec.z,
-      { color: 0xff9a2e, count: 8, speed: 3, life: 0.35, size: 0.8 },
+      { color: archerShot ? 0x5dff6b : 0xff9a2e, count: 8, speed: 3, life: 0.35, size: 0.8 },
     );
   }
 
@@ -1932,15 +1972,19 @@ export class Game {
   }
 
   /** Sync skill slot 2 with the current job (locked until advancement). */
-  /** Slot-1 is class-bound: Heavy Slash for warriors, Fireball for the rest. */
+  /** Slot-1 is class-bound: slash (warrior), bow shot (archer), fireball (mage). */
   private refreshSkillSlot1(): void {
-    const warrior = this.player.baseClass === 'warrior';
+    const cls = this.player.baseClass;
     if (this.elFireSlot) {
-      this.elFireSlot.title = warrior
+      this.elFireSlot.title = cls === 'warrior'
         ? 'Heavy Slash (1) — 2.3x melee · 8 MP'
-        : 'Fireball (1) — 0.7x bolt · +4 MP on hit';
+        : cls === 'archer'
+          ? 'Bow Shot (1) — 0.7x arrow · +4 MP on hit'
+          : 'Fireball (1) — 0.7x bolt · +4 MP on hit';
     }
-    if (this.elHelpSkill1) this.elHelpSkill1.textContent = warrior ? 'heavy slash' : 'fireball';
+    if (this.elHelpSkill1) {
+      this.elHelpSkill1.textContent = cls === 'warrior' ? 'heavy slash' : cls === 'archer' ? 'bow shot' : 'fireball';
+    }
   }
 
   private refreshSkillSlot(): void {    if (!this.elSkill2) return;
@@ -2011,7 +2055,7 @@ export class Game {
         const dir = this.aimDir();
         if (!dir) return;
         for (const a of [-0.18, 0, 0.18]) {
-          this.projectiles.fire(this.player.position, dir.clone().applyAxisAngle(UP, a), dmg * 1.3, 16, 18, 0x5dff6b);
+          this.projectiles.fire(this.player.position, dir.clone().applyAxisAngle(UP, a), dmg * 1.3, 16, 18, 0x5dff6b, null, 0, true);
         }
         this.sound.fireball();
         this.player.faceInstant(dir.clone().add(this.player.position));
@@ -2112,7 +2156,7 @@ export class Game {
       case 'arrow_storm': {
         for (let i = 0; i < 12; i++) {
           const a = (i / 12) * Math.PI * 2;
-          this.projectiles.fire(this.player.position, _aoeVec.set(Math.sin(a), 0, Math.cos(a)), dmg * 1.5, 15, 14, 0x5dff6b);
+          this.projectiles.fire(this.player.position, _aoeVec.set(Math.sin(a), 0, Math.cos(a)), dmg * 1.5, 15, 14, 0x5dff6b, null, 0, true);
         }
         this.player.swingAnim = 1;
         this.sound.fireball();
@@ -2434,6 +2478,7 @@ export class Game {
   /** Loot grabbed by clicking its crystal — bag space is checked before removal. */
   private onLootPickup(item: ItemInstance): void {
     if (item.baseId === 'woodsman_axe' && this.currentZoneId === 'city') this.markAxeGiftClaimed();
+    if (item.baseId === 'short_bow' && this.currentZoneId === 'city') this.markBowGiftClaimed();
     this.numbers.spawn(this.player.position, item.name, { color: RARITY_COLOR[item.rarity], scale: 1.15 });
     this.sound.lootRarity(item.rarity);
     this.effects.burst(this.player.position.x, 1.2, this.player.position.z, { color: parseInt(RARITY_COLOR[item.rarity].slice(1), 16), count: 8, speed: 3, life: 0.4, size: 0.8 });
@@ -2513,6 +2558,7 @@ export class Game {
     if (!this.elControlsList) return;
     const labels = { ...BIND_LABELS };
     if (this.player.baseClass === 'warrior') labels.fire = 'Heavy Slash';
+    else if (this.player.baseClass === 'archer') labels.fire = 'Bow Shot';
     this.elControlsList.innerHTML = controlsListHtml(getBinds(), this.rebindAction, labels);
   }
 

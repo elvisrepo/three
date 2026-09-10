@@ -33,3 +33,37 @@ export function buildAxe(): THREE.Group {
   }
   return g;
 }
+
+/** Recurve bow: bent limbs + taut string + leather grip, ~1.4 units tall. Held vertical. */
+export function buildBow(): THREE.Group {
+  const g = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a22, roughness: 0.8 });
+  const darkwood = new THREE.MeshStandardMaterial({ color: 0x3d2716, roughness: 0.85 });
+  const string = new THREE.MeshStandardMaterial({ color: 0xd8d2c4, roughness: 0.6 });
+  const leather = new THREE.MeshStandardMaterial({ color: 0x8a5a2b, roughness: 0.9 });
+
+  // Limbs: shallow arc (torus segment) in the XY plane, belly facing +x.
+  const limbs = new THREE.Mesh(new THREE.TorusGeometry(0.85, 0.05, 8, 20, Math.PI * 0.75), wood);
+  limbs.rotation.z = Math.PI / 2 - (Math.PI * 0.75) / 2;
+  // Nocked tips.
+  const tipTop = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), darkwood);
+  tipTop.position.set(-0.12, 0.68, 0);
+  const tipBottom = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 6), darkwood);
+  tipBottom.position.set(-0.12, -0.68, 0);
+  // Bowstring: two straight runs tip-to-tip (slight V via the grip).
+  const stringTop = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.72, 6), string);
+  stringTop.position.set(-0.1, 0.34, 0);
+  stringTop.rotation.z = 0.06;
+  const stringBottom = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.72, 6), string);
+  stringBottom.position.set(-0.1, -0.34, 0);
+  stringBottom.rotation.z = -0.06;
+  // Leather grip at the belly.
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.24, 8), leather);
+  grip.position.set(0.02, 0, 0);
+
+  for (const m of [limbs, tipTop, tipBottom, stringTop, stringBottom, grip]) {
+    m.castShadow = true;
+    g.add(m);
+  }
+  return g;
+}

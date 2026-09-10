@@ -4,7 +4,10 @@ import type { DamageNumbers } from './DamageNumbers';
 import { getFireAtlas } from './Flipbook';
 
 interface Bolt {
-  mesh: THREE.Mesh;
+  /** Container (position/visibility driver) — ball XOR arrow child is visible. */
+  mesh: THREE.Group;
+  ball: THREE.Mesh;
+  arrow: THREE.Group;
   mat: THREE.MeshStandardMaterial;
   glowMat: THREE.SpriteMaterial;
   vel: THREE.Vector3;
@@ -19,6 +22,12 @@ interface Bolt {
   siphon: number;
   active: boolean;
 }
+
+/** Shared arrow build (shaft + head + fletch along +Z, lookAt-aimed on fire). */
+const ARROW_SHAFT = new THREE.CylinderGeometry(0.035, 0.035, 0.9, 6);
+const ARROW_HEAD = new THREE.ConeGeometry(0.09, 0.28, 8);
+const ARROW_FLETCH = new THREE.BoxGeometry(0.02, 0.18, 0.28);
+const _aim = new THREE.Vector3();
 
 /** Pooled player projectiles (Fireball). No per-shot allocation. */
 export class ProjectilePool {
@@ -43,9 +52,19 @@ export class ProjectilePool {
         emissiveIntensity: 1.6,
         roughness: 0.3,
       });
-      const mesh = new THREE.Mesh(geo, mat);
+      const mesh = new THREE.Group();
       mesh.visible = false;
-      mesh.castShadow = false;
+      const ball = new THREE.Mesh(geo, mat);
+      const arrow = new THREE.Group();
+      const shaft = new THREE.Mesh(ARROW_SHAFT, mat);
+      shaft.rotation.x = Math.PI / 2;
+      const head = new THREE.Mesh(ARROW_HEAD, mat);
+      head.rotation.x = Math.PI / 2;
+      head.position.z = 0.56;
+      const fletch = new THREE.Mesh(ARROW_FLETCH, mat);
+      fletch.position.z = -0.38;
+      arrow.add(shaft, head, fletch);
+      arrow.visible = false;
       const glowMat = new THREE.SpriteMaterial({
         map: this.headTex,
         color: 0xff6a00,
@@ -54,16 +73,21 @@ export class ProjectilePool {
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
-      const glow = new THREE.Sprite(glowMat);
-      glow.scale.setScalar(1.7);
-      glow.renderOrder = 21;
-      mesh.add(glow);
+      const glowBall = new THREE.Sprite(glowMat);
+      glowBall.scale.setScalar(1.7);
+      glowBall.renderOrder = 21;
+      ball.add(glowBall);
+      const glowArrow = new THREE.Sprite(glowMat);
+      glowArrow.scale.setScalar(1.3);
+      glowArrow.renderOrder = 21;
+      arrow.add(glowArrow);
+      mesh.add(ball, arrow);
       scene.add(mesh);
-      this.bolts.push({ mesh, mat, glowMat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, trail: null, trailT: 0, siphon: 0, active: false });
+      this.bolts.push({ mesh, ball, arrow, mat, glowMat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, trail: null, trailT: 0, siphon: 0, active: false });
     }
   }
 
-  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number, trail?: number | null, siphon = 0): void {
+  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number, trail?: number | null, siphon = 0, arrow = false): void {
     const bolt = this.bolts.find((b) => !b.active);
     if (!bolt) return;
     bolt.active = true;
@@ -86,6 +110,9 @@ export class ProjectilePool {
     bolt.vel.copy(dir).setY(0).normalize().multiplyScalar(speed);
     bolt.mesh.position.set(from.x, 1.3, from.z);
     bolt.mesh.visible = true;
+    bolt.ball.visible = !arrow;
+    bolt.arrow.visible = arrow;
+    if (arrow) bolt.arrow.lookAt(_aim.copy(from).setY(1.3).add(dir));
   }
 
   get activeCount(): number {

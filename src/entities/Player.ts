@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { xpNeed, playerLevelUpBonus } from '../combat/Stats';
 import { CLASSES, type StarterClass, type Attrs } from '../data/Classes';
-import { buildAxe } from '../items/ItemModels';
+import { buildAxe, buildBow } from '../items/ItemModels';
 
 /** Attribute-derived combat bonus (delta-applied like gear — never double-counts). */
 export interface AttrBonus {
@@ -110,6 +110,8 @@ export class Player {
   spinPose = false;
   /** Visible weapon prop (axe first). Parented to the hand bone or body fallback. */
   private weaponAnchor = new THREE.Group();
+  /** Bow prop anchor (left hand — archers hold the bow off-hand). */
+  private bowAnchor = new THREE.Group();
   private weaponBaseId: string | null = null;
   /** Dodge dash state (i-frames while dodgeTimer > 0). */
   dodgeTimer = 0;
@@ -185,6 +187,8 @@ export class Player {
     // Hand prop anchor (body-space fallback until a hand bone is found).
     this.weaponAnchor.position.set(0.55, 1.1, 0.25);
     this.group.add(this.weaponAnchor);
+    this.bowAnchor.position.set(-0.55, 1.1, 0.25);
+    this.group.add(this.bowAnchor);
 
     // Spin-pose arms for the capsule body: horizontal bars at shoulder height,
     // shown only while whirlwinding (the skinned model poses its real bones).
@@ -354,16 +358,35 @@ export class Player {
     this.body.visible = true;
     this.nose.visible = true;
     this.mountWeaponAnchor();
+    this.mountBowAnchor();
   }
 
-  /** Show the equipped weapon model in hand (axe only for now, others = bare hands). */
+  /** Show the equipped weapon model in hand (axe right, bow left, else bare). */
   setWeaponModel(baseId: string | null): void {
-    const want = baseId === 'woodsman_axe' ? baseId : null;
-    if (want === this.weaponBaseId) return;
-    this.weaponBaseId = want;
-    for (let i = this.weaponAnchor.children.length - 1; i >= 0; i--) {
-      const c = this.weaponAnchor.children[i];
-      this.weaponAnchor.remove(c);
+    if (baseId === this.weaponBaseId) return;
+    this.weaponBaseId = baseId;
+    this.clearAnchor(this.weaponAnchor);
+    this.clearAnchor(this.bowAnchor);
+    if (baseId === 'woodsman_axe') {
+      const axe = buildAxe();
+      axe.scale.setScalar(0.85);
+      axe.position.y = -0.2;
+      axe.rotation.x = 0.2;
+      this.weaponAnchor.add(axe);
+    } else if (baseId !== null && baseId.includes('bow')) {
+      const bow = buildBow();
+      bow.scale.setScalar(0.9);
+      bow.position.y = -0.25;
+      this.bowAnchor.add(bow);
+    }
+    this.mountWeaponAnchor();
+    this.mountBowAnchor();
+  }
+
+  private clearAnchor(a: THREE.Group): void {
+    for (let i = a.children.length - 1; i >= 0; i--) {
+      const c = a.children[i];
+      a.remove(c);
       c.traverse((o) => {
         const mesh = o as THREE.Mesh;
         if (mesh.isMesh) {
@@ -374,14 +397,6 @@ export class Player {
         }
       });
     }
-    if (want) {
-      const axe = buildAxe();
-      axe.scale.setScalar(0.85);
-      axe.position.y = -0.2;
-      axe.rotation.x = 0.2;
-      this.weaponAnchor.add(axe);
-    }
-    this.mountWeaponAnchor();
   }
 
   /** Arm + forearm bones for the spin T-pose (Mixamo names, exact match). */
@@ -458,6 +473,26 @@ export class Player {
     }
   }
 
+  /** Mirror of mountWeaponAnchor for the left-hand bow prop. */
+  private mountBowAnchor(): void {
+    let hand: THREE.Object3D | null = null;
+    this.modelRoot?.traverse((o) => {
+      if (!hand && /lefthand/i.test(o.name)) hand = o;
+    });
+    const grip: THREE.Object3D | null = hand;
+    if (grip) {
+      (grip as THREE.Object3D).add(this.bowAnchor);
+      this.bowAnchor.position.set(0, 0, 0);
+      this.bowAnchor.rotation.set(0, 0, 0);
+      this.bowAnchor.scale.setScalar(100);
+    } else {
+      this.group.add(this.bowAnchor);
+      this.bowAnchor.position.set(-0.55, 1.1, 0.25);
+      this.bowAnchor.rotation.set(0, 0, 0);
+      this.bowAnchor.scale.setScalar(1);
+    }
+  }
+
   /**
    * Kill XZ root motion on looping clips (run/idle) so the model stays glued
    * to the simulated body. Mixamo downloads without "In Place" translate the
@@ -515,6 +550,7 @@ export class Player {
     this.modelKey = base;
     this.deathPlayed = false;
     this.mountWeaponAnchor();
+    this.mountBowAnchor();
 
     this.mixer = new THREE.AnimationMixer(baseObj);
     const idleClip = baseObj.animations[0] ?? null;
