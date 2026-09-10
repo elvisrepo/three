@@ -15,6 +15,8 @@ interface Bolt {
   /** Trail ember color (null = no trail — arrows, shields stay clean). */
   trail: number | null;
   trailT: number;
+  /** Mana refunded to the caster on hit (mage/archer builder loop, 0 = none). */
+  siphon: number;
   active: boolean;
 }
 
@@ -48,11 +50,11 @@ export class ProjectilePool {
       glow.renderOrder = 21;
       mesh.add(glow);
       scene.add(mesh);
-      this.bolts.push({ mesh, mat, glowMat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, trail: null, trailT: 0, active: false });
+      this.bolts.push({ mesh, mat, glowMat, vel: new THREE.Vector3(), traveled: 0, range: 18, damage: 10, color: 0xff6a00, trail: null, trailT: 0, siphon: 0, active: false });
     }
   }
 
-  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number, trail?: number | null): void {
+  fire(from: THREE.Vector3, dir: THREE.Vector3, damage: number, speed = 15, range = 18, color?: number, trail?: number | null, siphon = 0): void {
     const bolt = this.bolts.find((b) => !b.active);
     if (!bolt) return;
     bolt.active = true;
@@ -60,6 +62,7 @@ export class ProjectilePool {
     bolt.color = color ?? 0xff6a00;
     bolt.trail = trail ?? null;
     bolt.trailT = 0;
+    bolt.siphon = siphon;
     bolt.range = range;
     bolt.traveled = 0;
     if (color !== undefined) {
@@ -87,7 +90,7 @@ export class ProjectilePool {
     monsters: Monster[],
     numbers: DamageNumbers,
     onKill: (m: Monster) => void,
-    onHit?: (dealt: number, m: Monster, color: number) => void,
+    onHit?: (dealt: number, m: Monster, color: number, siphon: number) => void,
     onTrail?: (x: number, y: number, z: number, color: number) => void,
   ): void {
     for (const bolt of this.bolts) {
@@ -117,7 +120,7 @@ export class ProjectilePool {
             const crit = Math.random() < 0.15;
             const dmg = Math.max(1, Math.round(bolt.damage * (0.9 + Math.random() * 0.25) * (crit ? 1.5 : 1)));
             const died = m.takeDamage(dmg, crit, numbers);
-            onHit?.(dmg, m, bolt.color);
+            onHit?.(dmg, m, bolt.color, bolt.siphon);
             if (died) onKill(m);
             hit = true;
             break;

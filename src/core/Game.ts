@@ -48,9 +48,13 @@ const CAM_DIR = new THREE.Vector3(0, 18, 12).normalize();
 const UP = new THREE.Vector3(0, 1, 0);
 const _aoeVec = new THREE.Vector3();
 
-const FIREBALL_CD = 3;
-const FIREBALL_MULT = 2.1;
-const FIREBALL_COST = 8;
+const FIREBALL_CD = 0.5;
+const FIREBALL_MULT = 0.7;
+const FIREBALL_COST = 0;
+/** Builder loop: basic bolts refund mana on hit to fund spenders (meteor 20, ult 30). */
+const FIREBALL_SIPHON = 4;
+const SLASH_CD = 3;
+const SLASH_COST = 8;
 const BLINK_CD = 4;
 const BLINK_RANGE = 9;
 const RESPAWN_DELAY = 2.5;
@@ -1685,6 +1689,7 @@ export class Game {
       18,
       undefined,
       0xff6a00,
+      FIREBALL_SIPHON,
     );
     this.player.faceInstant(this.tmpVec.clone().add(this.player.position));
     this.player.swingAnim = 1;
@@ -1714,8 +1719,8 @@ export class Game {
   /** Warrior slot-1: Heavy Slash — one single-target heavy weapon swing (2.3x). */
   private trySlash(): void {
     if (!this.player.alive || this.fireTimer > 0) return;
-    if (!this.spendSkillMana(FIREBALL_COST)) return;
-    this.fireTimer = FIREBALL_CD;
+    if (!this.spendSkillMana(SLASH_COST)) return;
+    this.fireTimer = SLASH_CD;
     // Prefer the current attack target, else the nearest monster in reach.
     let target = this.player.attackTarget as Monster | null;
     if (!target || !target.alive) {
@@ -1901,7 +1906,7 @@ export class Game {
     if (this.elFireSlot) {
       this.elFireSlot.title = warrior
         ? 'Heavy Slash (1) — 2.3x melee · 8 MP'
-        : 'Fireball (1) — 2x damage · 8 MP';
+        : 'Fireball (1) — 0.7x bolt · +4 MP on hit';
     }
     if (this.elHelpSkill1) this.elHelpSkill1.textContent = warrior ? 'heavy slash' : 'fireball';
   }
@@ -3018,8 +3023,12 @@ export class Game {
         if (this.player.attackTarget === m) this.player.clearAttackTarget();
         this.updateBossBar();
       },
-      (dealt, m, color) => {
+      (dealt, m, color, siphon) => {
         this.healLifesteal(dealt);
+        // Builder loop: basic bolts refund mana on hit (silent, like lifesteal).
+        if (siphon > 0 && this.player.alive) {
+          this.player.mana = Math.min(this.player.maxMana, this.player.mana + siphon);
+        }
         this.sound.hit(false);
         this.effects.burst(m.position.x, 1.4, m.position.z, { color, count: 10, speed: 4, life: 0.4, size: 0.9 });
       },
