@@ -1304,7 +1304,7 @@ export class Game {
     boss.group.userData.monster = boss;
     this.monsters.push(boss);
     this.scene.add(boss.group);
-    this.bossCtrls.push(new BossController(this.scene, boss));
+    this.bossCtrls.push(new BossController(this.scene, boss, { magma: def.id === 'ember' }));
   }
 
   private spawnMinion(x: number, z: number, level: number): void {

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Monster } from './Monster';
+import { MagmaAura } from './MagmaAura';
 
 /**
  * Boss extras via composition (Monster stays decoupled — it only exposes
@@ -12,13 +13,15 @@ export class BossController {
   telegraph: THREE.Mesh;
   slamRadius = 4.8;
   summonPending = false;
+  /** Magma shell (ember boss only) — rides the boss group, flares on warn/enrage. */
+  readonly aura: MagmaAura | null = null;
 
   private slamCd = 4;
   private warnT = 0;
   private wasAlive = true;
   private summoned = false;
 
-  constructor(private scene: THREE.Scene, readonly boss: Monster) {
+  constructor(private scene: THREE.Scene, readonly boss: Monster, opts?: { magma?: boolean }) {
     this.telegraph = new THREE.Mesh(
       new THREE.RingGeometry(this.slamRadius - 0.55, this.slamRadius, 44),
       new THREE.MeshBasicMaterial({
@@ -33,6 +36,13 @@ export class BossController {
     this.telegraph.position.y = 0.06;
     this.telegraph.visible = false;
     scene.add(this.telegraph);
+
+    if (opts?.magma) {
+      this.aura = new MagmaAura({ radius: 0.95 });
+      // Group-space (boss group is scaled ~1.7x): sits over the torso.
+      this.aura.group.position.y = 1.0;
+      boss.group.add(this.aura.group);
+    }
   }
 
   reset(): void {
@@ -41,6 +51,10 @@ export class BossController {
     this.summoned = false;
     this.summonPending = false;
     this.telegraph.visible = false;
+    if (this.aura) {
+      this.aura.group.visible = true;
+      this.aura.setIntensity(0.4);
+    }
   }
 
   /** Returns slam damage to the player this frame (0 if none). */
@@ -49,6 +63,7 @@ export class BossController {
       this.wasAlive = false;
       this.telegraph.visible = false;
       this.warnT = 0;
+      if (this.aura) this.aura.group.visible = false;
       return 0;
     }
     if (!this.wasAlive && this.boss.alive) this.reset();
@@ -58,6 +73,13 @@ export class BossController {
       this.summoned = true;
       this.summonPending = true;
       this.boss.playSpecial('roar');
+    }
+
+    // Magma heat: idle simmer, slam warning flare, post-50% enrage burn.
+    if (this.aura) {
+      const enraged = this.boss.hp < this.boss.maxHp * 0.5;
+      this.aura.setIntensity(this.warnT > 0 ? 1.25 : enraged ? 0.8 : 0.4);
+      this.aura.update(dt);
     }
 
     const dist = this.boss.position.distanceTo(playerPos);
@@ -99,5 +121,6 @@ export class BossController {
     this.scene.remove(this.telegraph);
     this.telegraph.geometry.dispose();
     (this.telegraph.material as THREE.Material).dispose();
+    this.aura?.dispose();
   }
 }
