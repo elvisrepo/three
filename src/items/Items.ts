@@ -59,6 +59,13 @@ const BASES: ItemBase[] = [
   { id: 'ember_ring', name: 'Ember Ring', slot: 'ring', dmg: 0, armor: 0, icon: '💍', minLvl: 18 },
   { id: 'inferno_blade', name: 'Inferno Blade', slot: 'weapon', dmg: 20, armor: 0, icon: '🔥', minLvl: 20 },
   { id: 'magma_plate', name: 'Magma Plate', slot: 'chest', dmg: 0, armor: 16, icon: '🌋', minLvl: 20 },
+  { id: 'howling_blade', name: 'Howling Blade', slot: 'weapon', dmg: 26, armor: 0, icon: '🌪️', minLvl: 28 },
+  { id: 'wilds_helm', name: 'Wilds Helm', slot: 'helm', dmg: 0, armor: 12, icon: '⛑️', minLvl: 28 },
+  { id: 'windstep_boots', name: 'Windstep Boots', slot: 'boots', dmg: 0, armor: 10, icon: '🥾', minLvl: 28 },
+  { id: 'stormhide_armor', name: 'Stormhide Armor', slot: 'chest', dmg: 0, armor: 22, icon: '🦺', minLvl: 30 },
+  { id: 'frost_ring', name: 'Frost Ring', slot: 'ring', dmg: 0, armor: 0, icon: '💍', minLvl: 30 },
+  { id: 'antler_maul', name: "Hornfather's Antler", slot: 'weapon', dmg: 33, armor: 0, icon: '🦌', minLvl: 34 },
+  { id: 'hornfather_crown', name: 'Hornfather Crown', slot: 'helm', dmg: 0, armor: 14, icon: '👑', minLvl: 34 },
 ];
 
 export const RARITY_COLOR: Record<ItemRarity, string> = {
