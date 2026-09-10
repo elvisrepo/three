@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import type { Monster } from './Monster';
 import { MagmaAura } from './MagmaAura';
-import { ConstantValue } from 'three.quarks';
 import type { ParticleSystem } from 'three.quarks';
 import type { MeteorFx } from './MeteorQuarks';
 import { getMoteTexture, getCircleTexture, getPillarTexture } from './SavePoint';
@@ -80,7 +79,6 @@ const SKY_FADE = 0.35;
 
 const _skyDir = new THREE.Vector3();
 const _skyHead = new THREE.Vector3();
-const _skyFwd = new THREE.Vector3(0, 0, 1);
 export class BossController {
   telegraph: THREE.Mesh;
   slamRadius = 4.8;
@@ -113,8 +111,9 @@ export class BossController {
   private skyT = 0;
   private skyCd = 8;
   private skyCharge: ParticleSystem | null = null;
-  private skyBolt: ParticleSystem | null = null;
+  private skyBeam: { group: THREE.Group; mats: THREE.Material[] } | null = null;
   private skyTo = new THREE.Vector3();
+  private skyTtl = 1;
   private skyFired = false;
   private skyCore!: THREE.Sprite;
   private skyCoreMat!: THREE.SpriteMaterial;
@@ -151,6 +150,12 @@ export class BossController {
     if (this.portalVolley) this.buildPortalDress();
     this.skyFx = opts?.skyFx ?? null;
     this.slamOn = opts?.slam ?? true;
+    if (this.portalVolley || this.skyFx) {
+      this.beamTex = getPillarTexture().clone();
+      this.beamTex.needsUpdate = true;
+      this.beamTex.wrapS = this.beamTex.wrapT = THREE.RepeatWrapping;
+      this.beamTex.repeat.set(2, 3);
+    }
     if (this.skyFx) {
       this.skyCoreMat = new THREE.SpriteMaterial({
         map: getMoteTexture(), color: 0xf2e6ff, transparent: true, opacity: 0,
@@ -176,10 +181,6 @@ export class BossController {
   private buildPortalDress(): void {
     const moteTex = getMoteTexture();
     const circleTex = getCircleTexture();
-    this.beamTex = getPillarTexture().clone();
-    this.beamTex.needsUpdate = true;
-    this.beamTex.wrapS = this.beamTex.wrapT = THREE.RepeatWrapping;
-    this.beamTex.repeat.set(2, 3);
     for (let i = 0; i < 3; i++) {
       const discMat = new THREE.MeshBasicMaterial({
         color: 0xb44dff, transparent: true, opacity: 0.5,
@@ -602,7 +603,7 @@ export class BossController {
         this.boss.group.position.y = SKY_ELEVATE * e;
         if (this.skyT <= 0) {
           const head = this.skyHead(_skyHead);
-          this.skyCharge = fx.cloneSky('charge');
+          this.skyCharge = fx.cloneSky();
           this.skyCharge.emitter.position.copy(head);
           fx.setGravity(this.skyCharge, head.x, head.y, head.z);
           this.skyCore.position.copy(head);
@@ -631,8 +632,25 @@ export class BossController {
       }
       case 'fly': {
         this.skyT -= dt;
-        if (this.skyBolt) {
-          this.skyGlow.position.copy(this.skyBolt.emitter.position);
+        if (this.skyBeam) {
+          const head = this.skyHead(_skyHead);
+          _skyDir.copy(this.skyTo).sub(head);
+          const d = Math.max(0.01, _skyDir.length());
+          _skyDir.normalize();
+          const k = 1 - Math.max(0, this.skyT) / this.skyTtl;
+          const g = this.skyBeam.group;
+          g.position.copy(head).addScaledVector(_skyDir, (d * k) / 2);
+          g.lookAt(this.skyTo);
+          const wob = 1 + 0.12 * Math.sin(this.fxT * 43 + 2.1);
+          g.scale.set(wob, wob, Math.max(0.01, d * k));
+          const flick = 0.85 + 0.3 * Math.sin(this.fxT * 51) * Math.sin(this.fxT * 29 + 1.3);
+          const halo = this.skyBeam.mats[0] as THREE.MeshBasicMaterial;
+          const core = this.skyBeam.mats[1] as THREE.MeshBasicMaterial;
+          const mouth = this.skyBeam.mats[2] as THREE.SpriteMaterial;
+          halo.opacity = 0.85 * flick;
+          core.opacity = 1.0 * flick;
+          mouth.opacity = Math.max(0, 1 - k / 0.2);
+          this.skyGlow.position.copy(head).addScaledVector(_skyDir, d * k);
         }
         if (this.skyPopT > 0) {
           this.skyPopT -= dt;
@@ -655,29 +673,48 @@ export class BossController {
     }
   }
 
-  /** Hurl the charged orb at a snapshot of the target. */
+  /** Unleash: one continuous textured beam, grown crown→snapshot during fly. */
   private fireSky(aim: THREE.Vector3): void {
     const fx = this.skyFx;
-    if (!fx) {
-      this.skyPhase = 'fade';
-      this.skyT = SKY_FADE;
-      return;
-    }
     const head = this.skyHead(_skyHead);
     this.skyTo.set(aim.x, 0.9, aim.z);
     _skyDir.copy(this.skyTo).sub(head);
     const dist = _skyDir.length();
-    if (dist < 0.01) {
+    if (!fx || !this.beamTex || dist < 0.01) {
       this.skyPhase = 'fade';
       this.skyT = SKY_FADE;
       return;
     }
     _skyDir.normalize();
-    const bolt = fx.cloneSky('bolt');
-    bolt.emitter.position.copy(head);
-    bolt.emitter.quaternion.setFromUnitVectors(_skyFwd, _skyDir);
-    bolt.startLife = new ConstantValue(dist / SKY_BOLT_SPEED + 0.05);
-    this.skyBolt = bolt;
+    const haloMat = new THREE.MeshBasicMaterial({
+      map: this.beamTex, color: 0xb44dff, transparent: true, opacity: 0.85,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const coreMat = new THREE.MeshBasicMaterial({
+      map: this.beamTex, color: 0xffffff, transparent: true, opacity: 1.0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+    });
+    const mouthMat = new THREE.SpriteMaterial({
+      map: getMoteTexture(), color: 0xe0b3ff, transparent: true, opacity: 1,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    });
+    const group = new THREE.Group();
+    const halo = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.55, 1, 12, 1, true), haloMat);
+    halo.rotation.x = Math.PI / 2;
+    halo.renderOrder = 26;
+    const core = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 1, 10, 1, true), coreMat);
+    core.rotation.x = Math.PI / 2;
+    core.renderOrder = 27;
+    const mouth = new THREE.Sprite(mouthMat);
+    mouth.scale.setScalar(2.6);
+    mouth.position.z = -0.5;
+    mouth.renderOrder = 28;
+    group.add(halo, core, mouth);
+    group.position.copy(head);
+    group.lookAt(this.skyTo);
+    group.scale.set(1, 1, 0.01);
+    this.scene.add(group);
+    this.skyBeam = { group, mats: [haloMat, coreMat, mouthMat] };
     if (this.skyCharge) {
       fx.detach(this.skyCharge);
       this.skyCharge = null;
@@ -687,20 +724,29 @@ export class BossController {
     this.skyPopT = 0.15;
     this.skyGlow.visible = true;
     this.skyGlowMat.opacity = 0.9;
+    this.skyGlow.scale.setScalar(2.6);
     this.skyFired = true;
     this.skyPhase = 'fly';
-    this.skyT = dist / SKY_BOLT_SPEED;
+    this.skyTtl = dist / SKY_BOLT_SPEED;
+    this.skyT = this.skyTtl;
+  }
+
+  /** Dispose the sky beam visuals (detonate + cleanup paths). */
+  private dropSkyBeam(): void {
+    if (!this.skyBeam) return;
+    this.scene.remove(this.skyBeam.group);
+    this.skyBeam.group.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.geometry.dispose();
+    });
+    for (const m of this.skyBeam.mats) m.dispose();
+    this.skyBeam = null;
   }
 
   /** Orb arrival: bank AoE damage + a scaled impact for Game-side FX. */
   private detonateSky(playerPos: THREE.Vector3): void {
-    const fx = this.skyFx;
     this.skyGlow.visible = false;
-    if (this.skyBolt && fx) {
-      this.skyBolt.endEmit();
-      fx.detach(this.skyBolt);
-      this.skyBolt = null;
-    }
+    this.dropSkyBeam();
     const dx = playerPos.x - this.skyTo.x;
     const dz = playerPos.z - this.skyTo.z;
     if (dx * dx + dz * dz < SKY_RADIUS * SKY_RADIUS) {
@@ -714,19 +760,13 @@ export class BossController {
   /** Detach charge/bolt, drop the core, ground the boss (reset/death path). */
   private skyCleanup(): void {
     const fx = this.skyFx;
-    if (fx) {
-      if (this.skyCharge) {
-        fx.detach(this.skyCharge);
-        this.skyCharge = null;
-      }
-      if (this.skyBolt) {
-        fx.detach(this.skyBolt);
-        this.skyBolt = null;
-      }
+    if (fx && this.skyCharge) {
+      fx.detach(this.skyCharge);
+      this.skyCharge = null;
     } else {
       this.skyCharge = null;
-      this.skyBolt = null;
     }
+    this.dropSkyBeam();
     if (this.skyCore) this.skyCore.visible = false;
     if (this.skyGlow) this.skyGlow.visible = false;
     this.boss.group.position.y = 0;

@@ -43,21 +43,6 @@ function fireGradient(): Gradient {
   );
 }
 
-function arcaneGradient(): Gradient {
-  return new Gradient(
-    [
-      [new QuarksVec3(1, 0.96, 1), 0],
-      [new QuarksVec3(0.72, 0.42, 1), 0.5],
-      [new QuarksVec3(0.32, 0.1, 0.62), 1],
-    ],
-    [
-      [1, 0],
-      [0.95, 0.3],
-      [0, 1],
-    ],
-  );
-}
-
 
 /** Full flipbook sweep 0 → frames-1 over particle life (tile blending on). */
 function fullSweep(frames: number): FrameOverLife {
@@ -82,9 +67,7 @@ export class MeteorFx {
   private emberTemplate!: ParticleSystem;
   private smokeTemplate!: ParticleSystem;
   private live: LiveOneShot[] = [];
-  private skyBoltMat!: THREE.MeshBasicMaterial;
   private skyChargeTemplate!: ParticleSystem;
-  private skyBoltTemplate!: ParticleSystem;
   /** Looping fall columns, keyed by handle for stopFall/stopAll. */
   private falls = new Set<ParticleSystem>();
   private addMat!: THREE.MeshBasicMaterial;
@@ -106,12 +89,6 @@ export class MeteorFx {
     });
     this.flipMat = new THREE.MeshBasicMaterial({
       map: fire.tex,
-      transparent: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.skyBoltMat = new THREE.MeshBasicMaterial({
-      map: mote,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
@@ -248,29 +225,11 @@ export class MeteorFx {
         new ColorOverLife(fireGradient()),
       ],
     });
-
-    // Skyfall bolt: single heavy orb + ribbon trail, aimed by emitter quaternion.
-    this.skyBoltTemplate = new ParticleSystem({
-      looping: false,
-      duration: 2,
-      worldSpace: true,
-      shape: new ConeEmitter({ radius: 0.2, angle: 0.04 }),
-      startLife: new ConstantValue(1.0),
-      startSpeed: new ConstantValue(13),
-      startSize: new ConstantValue(1.25),
-      startColor: new ConstantColor(new QuarksVec4(1, 1, 1, 1)),
-      emissionBursts: [{ time: 0, count: new ConstantValue(1), cycle: 1, interval: 0.01, probability: 1 }],
-      renderMode: RenderMode.Trail,
-      rendererEmitterSettings: { startLength: new ConstantValue(4.2), followLocalOrigin: false },
-      material: this.skyBoltMat,
-      renderOrder: 26,
-      behaviors: [new ColorOverLife(arcaneGradient())],
-    });
   }
 
-  /** Clone a template, attach it, and play — caller owns the handle. */
-  cloneSky(which: 'charge' | 'bolt'): ParticleSystem {
-    const s = (which === 'charge' ? this.skyChargeTemplate : this.skyBoltTemplate).clone();
+  /** Clone the charge template, attach it, and play — caller owns the handle. */
+  cloneSky(): ParticleSystem {
+    const s = this.skyChargeTemplate.clone();
     this.attach(s);
     s.play();
     return s;
