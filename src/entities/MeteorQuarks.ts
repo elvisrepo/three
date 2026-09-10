@@ -11,6 +11,7 @@ import {
   ColorOverLife,
   SizeOverLife,
   SpeedOverLife,
+  FrameOverLife,
   Gradient,
   Bezier,
   PiecewiseBezier,
@@ -18,6 +19,7 @@ import {
   Vector4 as QuarksVec4,
 } from 'three.quarks';
 import { getMoteTexture } from './SavePoint';
+import { getFireAtlas, getSmokeAtlas } from './Flipbook';
 
 interface LiveOneShot {
   s: ParticleSystem;
@@ -40,8 +42,10 @@ function fireGradient(): Gradient {
   );
 }
 
-function shrink(): PiecewiseBezier {
-  return new PiecewiseBezier([[new Bezier(1, 0.9, 0.25, 0), 0]]);
+/** Full flipbook sweep 0 → frames-1 over particle life (tile blending on). */
+function fullSweep(frames: number): FrameOverLife {
+  const last = frames - 1;
+  return new FrameOverLife(new PiecewiseBezier([[new Bezier(0, last / 3, (2 * last) / 3, last), 0]]));
 }
 
 /**
@@ -64,23 +68,33 @@ export class MeteorFx {
   /** Looping fall columns, keyed by handle for stopFall/stopAll. */
   private falls = new Set<ParticleSystem>();
   private addMat!: THREE.MeshBasicMaterial;
+  private flipMat!: THREE.MeshBasicMaterial;
   private smokeMat!: THREE.MeshBasicMaterial;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     scene.add(this.batch);
     const mote = getMoteTexture();
+    const fire = getFireAtlas();
+    const smoke = getSmokeAtlas();
+    // Soft dots (fall streaks). Flipbook maps below (flash/fire/embers/smoke).
     this.addMat = new THREE.MeshBasicMaterial({
       map: mote,
       transparent: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    this.smokeMat = new THREE.MeshBasicMaterial({
-      map: mote,
-      color: 0x555555,
+    this.flipMat = new THREE.MeshBasicMaterial({
+      map: fire.tex,
       transparent: true,
-      opacity: 0.4,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.smokeMat = new THREE.MeshBasicMaterial({
+      map: smoke.tex,
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.55,
       depthWrite: false,
     });
 
@@ -102,7 +116,7 @@ export class MeteorFx {
       behaviors: [new ColorOverLife(fireGradient())],
     });
 
-    // Detonation flash: big soft billboards, gone in a blink.
+    // Detonation flash: flipbook starburst, gone in a blink.
     this.flashTemplate = new ParticleSystem({
       looping: false,
       duration: 0.4,
@@ -114,12 +128,15 @@ export class MeteorFx {
       startColor: new ConstantColor(new QuarksVec4(1, 0.9, 0.7, 1)),
       emissionBursts: [{ time: 0, count: new ConstantValue(10), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
-      material: this.addMat,
+      material: this.flipMat,
       renderOrder: 26,
-      behaviors: [new ColorOverLife(fireGradient()), new SizeOverLife(shrink())],
+      uTileCount: fire.cols,
+      vTileCount: fire.rows,
+      blendTiles: true,
+      behaviors: [fullSweep(fire.frames)],
     });
 
-    // Fireball core: upward cone, decays fast.
+    // Fireball core: flipbook flames in an upward cone, decays fast.
     this.fireTemplate = new ParticleSystem({
       looping: false,
       duration: 0.9,
@@ -131,16 +148,18 @@ export class MeteorFx {
       startColor: new ConstantColor(new QuarksVec4(1, 0.5, 0.1, 1)),
       emissionBursts: [{ time: 0, count: new ConstantValue(42), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
-      material: this.addMat,
+      material: this.flipMat,
       renderOrder: 25,
+      uTileCount: fire.cols,
+      vTileCount: fire.rows,
+      blendTiles: true,
       behaviors: [
-        new ColorOverLife(fireGradient()),
-        new SizeOverLife(shrink()),
+        fullSweep(fire.frames),
         new SpeedOverLife(new PiecewiseBezier([[new Bezier(1, 0.7, 0.3, 0.15), 0]])),
       ],
     });
 
-    // Embers: long-lived rising sparks.
+    // Embers: flipbook tails on long-lived rising sparks.
     this.emberTemplate = new ParticleSystem({
       looping: false,
       duration: 1.6,
@@ -152,12 +171,15 @@ export class MeteorFx {
       startColor: new ConstantColor(new QuarksVec4(1, 0.6, 0.2, 1)),
       emissionBursts: [{ time: 0, count: new ConstantValue(26), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
-      material: this.addMat,
+      material: this.flipMat,
       renderOrder: 25,
-      behaviors: [new ColorOverLife(fireGradient()), new SizeOverLife(shrink())],
+      uTileCount: fire.cols,
+      vTileCount: fire.rows,
+      blendTiles: true,
+      behaviors: [fullSweep(fire.frames)],
     });
 
-    // Smoke: normal-blended gray puffs (own material/batch).
+    // Smoke: flipbook puffs (own material/batch).
     this.smokeTemplate = new ParticleSystem({
       looping: false,
       duration: 1.8,
@@ -166,12 +188,18 @@ export class MeteorFx {
       startLife: new IntervalValue(1.0, 1.6),
       startSpeed: new IntervalValue(1.5, 3),
       startSize: new IntervalValue(0.9, 1.4),
-      startColor: new ConstantColor(new QuarksVec4(0.35, 0.32, 0.32, 0.5)),
+      startColor: new ConstantColor(new QuarksVec4(1, 1, 1, 0.9)),
       emissionBursts: [{ time: 0, count: new ConstantValue(12), cycle: 1, interval: 0.01, probability: 1 }],
       renderMode: RenderMode.BillBoard,
       material: this.smokeMat,
       renderOrder: 23,
-      behaviors: [new SizeOverLife(new PiecewiseBezier([[new Bezier(0.6, 1, 1.2, 1.4), 0]]))],
+      uTileCount: smoke.cols,
+      vTileCount: smoke.rows,
+      blendTiles: true,
+      behaviors: [
+        fullSweep(smoke.frames),
+        new SizeOverLife(new PiecewiseBezier([[new Bezier(0.6, 1, 1.2, 1.4), 0]])),
+      ],
     });
   }
 

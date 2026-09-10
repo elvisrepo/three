@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { Monster } from './Monster';
 import type { DamageNumbers } from './DamageNumbers';
-import { getMoteTexture } from './SavePoint';
+import { getFireAtlas } from './Flipbook';
 
 interface Bolt {
   mesh: THREE.Mesh;
@@ -23,10 +23,19 @@ interface Bolt {
 /** Pooled player projectiles (Fireball). No per-shot allocation. */
 export class ProjectilePool {
   private bolts: Bolt[] = [];
+  /** Own flipbook clone (read-only base atlas stays pristine for quarks). */
+  private headTex: THREE.Texture;
+  private headTile = 0;
+  private headFrames = 16;
 
   constructor(scene: THREE.Scene, size = 16) {
     const geo = new THREE.SphereGeometry(0.24, 12, 10);
-    const glowTex = getMoteTexture();
+    const atlas = getFireAtlas();
+    this.headTex = atlas.tex.clone();
+    this.headTex.needsUpdate = true;
+    this.headTex.wrapS = this.headTex.wrapT = THREE.ClampToEdgeWrapping;
+    this.headTex.repeat.set(1 / atlas.cols, 1 / atlas.rows);
+    this.headFrames = atlas.frames;
     for (let i = 0; i < size; i++) {
       const mat = new THREE.MeshStandardMaterial({
         color: 0xff9a2e,
@@ -38,15 +47,15 @@ export class ProjectilePool {
       mesh.visible = false;
       mesh.castShadow = false;
       const glowMat = new THREE.SpriteMaterial({
-        map: glowTex,
+        map: this.headTex,
         color: 0xff6a00,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.9,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
       const glow = new THREE.Sprite(glowMat);
-      glow.scale.setScalar(1.5);
+      glow.scale.setScalar(1.7);
       glow.renderOrder = 21;
       mesh.add(glow);
       scene.add(mesh);
@@ -93,6 +102,11 @@ export class ProjectilePool {
     onHit?: (dealt: number, m: Monster, color: number, siphon: number) => void,
     onTrail?: (x: number, y: number, z: number, color: number) => void,
   ): void {
+    // flipbook head cycle (shared clone — all bolts stay in sync, invisible in flight)
+    this.headTile = (this.headTile + dt * 24) % this.headFrames;
+    const headCol = Math.floor(this.headTile) % 4;
+    const headRow = Math.floor(Math.floor(this.headTile) / 4);
+    this.headTex.offset.set(headCol / 4, 1 - (headRow + 1) / 4);
     for (const bolt of this.bolts) {
       if (!bolt.active) continue;
       const step = bolt.vel.clone().multiplyScalar(dt);

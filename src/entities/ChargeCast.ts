@@ -1,5 +1,22 @@
 import * as THREE from 'three';
 import { getMoteTexture, getCircleTexture } from './SavePoint';
+import { getFireAtlas } from './Flipbook';
+
+/** Shared muzzle-core clone (base atlas stays pristine for quarks). */
+let muzzleTex: THREE.Texture | null = null;
+let muzzleFrames = 16;
+
+function getMuzzleTex(): THREE.Texture {
+  if (!muzzleTex) {
+    const atlas = getFireAtlas();
+    muzzleTex = atlas.tex.clone();
+    muzzleTex.needsUpdate = true;
+    muzzleTex.wrapS = muzzleTex.wrapT = THREE.ClampToEdgeWrapping;
+    muzzleTex.repeat.set(1 / atlas.cols, 1 / atlas.rows);
+    muzzleFrames = atlas.frames;
+  }
+  return muzzleTex;
+}
 
 interface Converge {
   sprite: THREE.Sprite;
@@ -149,9 +166,8 @@ export class MuzzleFlash {
   private readonly dur = 0.22;
 
   constructor(scene: THREE.Scene) {
-    const moteTex = getMoteTexture();
     this.coreMat = new THREE.SpriteMaterial({
-      map: moteTex, color: 0xffffff, transparent: true, opacity: 0,
+      map: getMuzzleTex(), color: 0xffffff, transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false,
     });
     this.core = new THREE.Sprite(this.coreMat);
@@ -181,6 +197,9 @@ export class MuzzleFlash {
     const k = Math.min(1, this.t / this.dur);
     this.core.scale.setScalar(0.5 + k * 2.2);
     this.coreMat.opacity = 1 - k;
+    // flipbook sweep across the pop (shared clone, same value for all muzzles)
+    const tile = Math.min(muzzleFrames - 1, Math.floor(k * muzzleFrames));
+    getMuzzleTex().offset.set((tile % 4) / 4, 1 - (Math.floor(tile / 4) + 1) / 4);
     this.rays.scale.setScalar(0.8 + k * 3.4);
     this.raysMat.rotation += dt * 14;
     this.raysMat.opacity = (1 - k) * 0.9;

@@ -2306,6 +2306,7 @@ export class Game {
       this.numbers.spawn(this.player.position, 'LEVEL UP!', { color: '#ffd21f', crit: true, scale: 1.8 });
       this.effects.burst(this.player.position.x, 1.0, this.player.position.z, { color: 0xffd21f, count: 24, speed: 5, life: 0.7, size: 1.1 });
       this.effects.ring(this.player.position.x, this.player.position.z, 0xffd21f, 3.5);
+      this.fireMuzzle(this.player.position.x, 1.5, this.player.position.z, 0xffd21f);
       this.flashScreen('#ffd21f', 0.25, 0.4);
       this.sound.levelup();
       this.showToast(`Level ${this.player.level}! +3 stat points (C) · Trader restocked · +1 potion`, 3.2);
