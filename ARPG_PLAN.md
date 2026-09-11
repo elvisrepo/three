@@ -428,11 +428,11 @@ Things offered or noticed but deliberately not built yet. Check here before prop
 - **Balance telemetry** — done (basic: `logTelemetry` in `Game.ts` logs `timeToLevel, death, bossKill` to `arpg.telemetry.v1` + console).
 
 ### Playtest notes (verify in-game, then delete or fix)
-- **Meteor vs chasers** — 0.7s delay may whiff on fast monsters. If so: lead reticle, faster delay (0.5s), or small vacuum on detonate.
+- **Meteor vs chasers** — fixed (delay 0.7s → 0.5s + detonate vacuum drags non-boss foes in; `vacuumTo` in `Game.ts`).
 - **Berserker spin lock** — 0.4s rotation override; confirm it feels powerful, not disorienting.
-- **Crypt pad muddiness** — detuned saws through 500Hz lowpass may be muddy on laptop speakers; listen and thin it out if needed.
+- **Crypt pad muddiness** — fixed in code (single-voice pads + 500→650Hz cutoff on low moods via `voices` in `Sound.ts`; rift too). Still needs ears on laptop speakers to confirm.
 - **Low-end perf** — untested on weak hardware. Caps to watch: 18 monsters, 128 FX particles, 2048 shadow map, pixelRatio ≤ 2.
-- **Sanctum discoverability** — one-time toast only. If players hit 10 and wander, add a Haven minimap ping or NPC pointer.
+- **Sanctum discoverability** — fixed in code (pulsing gold star on the Haven minimap + hint toast points at it). Confirm new players find it.
 
 ### Tech debt (works, but note the shape)
 - `Game.ts` split done (9 pure `src/ui/` builders; `Game.ts` keeps thin DOM wrappers + sim). Remainder intentionally in `Game.ts`: `updateBossBar`, toast/flash/marker helpers, `drawMinimap`.

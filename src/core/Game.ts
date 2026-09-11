@@ -2037,7 +2037,7 @@ export class Game {
   private hintSanctum(): void {
     if (!this.started || this.player.job !== null || this.player.level < ADVANCE_LEVEL || this.sanctumHintShown) return;
     this.sanctumHintShown = true;
-    this.showToast('⭐ Job advancement awaits in the golden Sanctum circle in Haven!', 3.5);
+    this.showToast('⭐ Job advancement awaits in the golden Sanctum — gold star on the minimap!', 3.5);
   }
 
   /** One-time ultimate unlock toast (the slot itself refreshes every zone load). */
@@ -2221,9 +2221,9 @@ export class Game {
       case 'meteor': {
         const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
         if (!aim) return;
-        const m = this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.7, 0xff6a00, { flash: '#ff8a2e', scorch: true, meteor: true });
+        const m = this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.5, 0xff6a00, { flash: '#ff8a2e', scorch: true, meteor: true });
         m.qFall = this.meteorFx.startFall(aim.x, aim.z);
-        this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 0.7);
+        this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 0.5);
         this.player.castAnim = 1;
         this.sound.fireball();
         break;
@@ -2461,6 +2461,8 @@ export class Game {
       this.effects.burst(a.x, 1.0, a.z, { color: a.color, count: 22, speed: 7, life: 0.6, size: 1.2 });
       if (a.qFall) this.meteorFx.stopFall(a.qFall);
       if (a.meteor) this.meteorFx.impact(a.x, a.z);
+      // Meteor vacuum: drag nearby foes into the blast so chasers can't walk out of it.
+      if (a.meteor) this.vacuumTo(a.x, a.z, a.radius);
       if (a.scorch) this.effects.scorch(a.x, a.z, a.radius);
       if (a.hurtPct > 0 && this.player.alive) {
         const pdx = this.player.position.x - a.x;
@@ -2474,6 +2476,21 @@ export class Game {
       if (a.sfx === 'slam') this.sound.bossSlam();
       this.camShake = Math.min(0.9, this.camShake + 0.45);
       this.hitAllInRadius(_aoeVec.set(a.x, 0, a.z), a.radius, a.damage, a.slow, a.color);
+    }
+  }
+
+  /** Meteor detonate assist: pull live monsters at the blast's edge into it.
+   *  Plain position nudge (no sim coupling) — stops short of dead-center. */
+  private vacuumTo(x: number, z: number, radius: number): void {
+    for (const m of this.monsters) {
+      if (!m.alive || m.isBoss) continue;
+      const dx = x - m.position.x;
+      const dz = z - m.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 0.6 || d > radius + 2) continue;
+      const pull = Math.min(1.6, d - 0.6);
+      m.position.x = THREE.MathUtils.clamp(m.position.x + (dx / d) * pull, -29, 29);
+      m.position.z = THREE.MathUtils.clamp(m.position.z + (dz / d) * pull, -29, 29);
     }
   }
 
@@ -3692,6 +3709,19 @@ export class Game {
       ctx.lineTo(mx, mz + 4);
       ctx.lineTo(mx - 4, mz);
       ctx.closePath();
+      ctx.fill();
+    }
+    // Sanctum (pulsing gold star, city only) — advancement discoverability.
+    if (this.sanctum.visible) {
+      const [mx, mz] = toMap(this.sanctum.position.x, this.sanctum.position.z);
+      const pulse = 4 + Math.sin(performance.now() * 0.006) * 1.5;
+      ctx.fillStyle = '#ffd21f';
+      ctx.beginPath();
+      ctx.arc(mx, mz, pulse, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1a1206';
+      ctx.beginPath();
+      ctx.arc(mx, mz, Math.max(1.5, pulse - 2.5), 0, Math.PI * 2);
       ctx.fill();
     }
     // Trash monsters (elites get a gold dot)

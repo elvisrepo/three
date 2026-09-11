@@ -15,15 +15,17 @@ interface MoodDef {
   pluckEvery: [number, number];
   pluckVol: number;
   cutoff: number;
+  /** Pad voices per chord tone: 2 = detuned saw pair (wide), 1 = single (thin, for low muddy roots). */
+  voices: 1 | 2;
 }
 
 const MOODS: Record<MusicMood, MoodDef> = {
-  city: { root: 220, scale: [0, 2, 4, 7, 9], chord: [0, 4, 7], padEvery: 9, pluckEvery: [0.5, 1.1], pluckVol: 0.05, cutoff: 900 },
-  meadow: { root: 196, scale: [0, 2, 4, 7, 9], chord: [0, 4, 7], padEvery: 8, pluckEvery: [0.4, 0.9], pluckVol: 0.06, cutoff: 1200 },
-  crypt: { root: 110, scale: [0, 2, 3, 7, 8], chord: [0, 3, 7], padEvery: 11, pluckEvery: [0.8, 1.8], pluckVol: 0.045, cutoff: 500 },
-  ember: { root: 98, scale: [0, 2, 3, 7, 10], chord: [0, 3, 7], padEvery: 9, pluckEvery: [0.5, 1.2], pluckVol: 0.05, cutoff: 700 },
-  wilds: { root: 130, scale: [0, 2, 3, 7, 8], chord: [0, 3, 7], padEvery: 12, pluckEvery: [0.9, 2.0], pluckVol: 0.04, cutoff: 600 },
-  rift: { root: 82, scale: [0, 1, 5, 6, 10], chord: [0, 1, 7], padEvery: 14, pluckEvery: [1.2, 2.6], pluckVol: 0.035, cutoff: 420 },
+  city: { root: 220, scale: [0, 2, 4, 7, 9], chord: [0, 4, 7], padEvery: 9, pluckEvery: [0.5, 1.1], pluckVol: 0.05, cutoff: 900, voices: 2 },
+  meadow: { root: 196, scale: [0, 2, 4, 7, 9], chord: [0, 4, 7], padEvery: 8, pluckEvery: [0.4, 0.9], pluckVol: 0.06, cutoff: 1200, voices: 2 },
+  crypt: { root: 110, scale: [0, 2, 3, 7, 8], chord: [0, 3, 7], padEvery: 11, pluckEvery: [0.8, 1.8], pluckVol: 0.045, cutoff: 650, voices: 1 },
+  ember: { root: 98, scale: [0, 2, 3, 7, 10], chord: [0, 3, 7], padEvery: 9, pluckEvery: [0.5, 1.2], pluckVol: 0.05, cutoff: 700, voices: 2 },
+  wilds: { root: 130, scale: [0, 2, 3, 7, 8], chord: [0, 3, 7], padEvery: 12, pluckEvery: [0.9, 2.0], pluckVol: 0.04, cutoff: 600, voices: 2 },
+  rift: { root: 82, scale: [0, 1, 5, 6, 10], chord: [0, 1, 7], padEvery: 14, pluckEvery: [1.2, 2.6], pluckVol: 0.035, cutoff: 420, voices: 1 },
 };
 
 const SETTINGS_KEY = 'arpg.settings.v1';
@@ -181,9 +183,13 @@ export class SoundManager {
     if (!this.ctx || !this.musicBus) return;
     const ctx = this.ctx;
     const t = ctx.currentTime + 0.05;
+    // Single-voice moods compensate with slightly hotter gain (3 thin voices
+    // replace 6 stacked saws — same presence, less low-end mud).
+    const peak = def.voices === 1 ? 0.05 : 0.035;
+    const dets = def.voices === 1 ? [0] : [-4, 4];
     for (const iv of def.chord) {
       const f = def.root * SEMI ** iv;
-      for (const det of [-4, 4]) {
+      for (const det of dets) {
         const osc = ctx.createOscillator();
         osc.type = 'sawtooth';
         osc.frequency.value = f;
@@ -193,8 +199,8 @@ export class SoundManager {
         flt.frequency.value = def.cutoff;
         const g = ctx.createGain();
         g.gain.setValueAtTime(0, t);
-        g.gain.linearRampToValueAtTime(0.035, t + 1.8);
-        g.gain.setValueAtTime(0.035, t + def.padEvery - 2.5);
+        g.gain.linearRampToValueAtTime(peak, t + 1.8);
+        g.gain.setValueAtTime(peak, t + def.padEvery - 2.5);
         g.gain.linearRampToValueAtTime(0, t + def.padEvery - 0.3);
         osc.connect(flt).connect(g).connect(this.musicBus);
         osc.start(t);

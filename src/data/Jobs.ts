@@ -75,7 +75,7 @@ export const JOBS: JobDef[] = [
     icon: '☄️',
     desc: 'Sky-fire caller. Meteor devastates an area.',
     bonus: { maxHp: 15, damage: 6, crit: 0 },
-    skill: { id: 'meteor', name: 'Meteor', icon: '☄️', cooldown: 8, cost: 20, desc: '3.2x fire blast after 0.7s.' },
+    skill: { id: 'meteor', name: 'Meteor', icon: '☄️', cooldown: 8, cost: 20, desc: '3.2x fire blast after 0.5s, drags foes in.' },
     ultimate: { id: 'cataclysm', name: 'Cataclysm', icon: '🌋', cooldown: 30, cost: 30, desc: '3 staggered meteors, 3x each.' },
   },
   {
