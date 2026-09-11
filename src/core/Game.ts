@@ -32,9 +32,10 @@ import {
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
 import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL, type JobExtraSkill } from '../data/Jobs';
 import { FrostLance, FROST_LANCE_LENGTH } from '../entities/FrostLance';
-import { StormLance, STORM_LANCE_LENGTH } from '../entities/StormLance';
+import { StormLance, STORM_LANCE_LENGTH, STORM_RED } from '../entities/StormLance';
 import { NovaBeam, NOVA_BEAM_LENGTH } from '../entities/NovaBeam';
 import { MeteorRocks } from '../entities/MeteorRocks';
+import { SnareTrap, SNARE_RADIUS } from '../entities/SnareTrap';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
@@ -169,6 +170,7 @@ export class Game {
   private stormLance!: StormLance;
   private novaBeam!: NovaBeam;
   private meteorRocks!: MeteorRocks;
+  private snareTrap!: SnareTrap;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -425,6 +427,7 @@ export class Game {
     for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
     this.meteorFx = new MeteorFx(this.scene);
     this.meteorRocks = new MeteorRocks(this.scene);
+    this.snareTrap = new SnareTrap(this.scene);
     this.frostLance = new FrostLance(this.scene);
     this.stormLance = new StormLance(this.scene);
     this.novaBeam = new NovaBeam(this.scene);
@@ -1289,6 +1292,7 @@ export class Game {
     this.pendingAoe = [];
     this.meteorFx.stopAll();
     this.meteorRocks.clear();
+    this.snareTrap.clear();
     this.frostLance.clear();
     this.stormLance.clear();
     this.novaBeam.clear();
@@ -2504,17 +2508,20 @@ export class Game {
         if (!dir) return;
         this.player.faceInstant(dir.clone().add(this.player.position));
         this.player.castAnim = 1;
-        this.stormLance.cast(this.player.position, dir);
+        // Pyromancer's storm burns red; Cryomancer keeps the authored blue.
+        const red = this.player.job === 'pyromancer';
+        this.stormLance.cast(this.player.position, dir, red ? STORM_RED : undefined);
         // Damage lands with the strike front: four circles down the line.
+        const boltColor = red ? 0xff7b2e : 0x5db4ff;
         for (let k = 0; k < 4; k++) {
           const cx = this.player.position.x + dir.x * (3 + k * 3);
           const cz = this.player.position.z + dir.z * (3 + k * 3);
-          this.queueAoe(cx, cz, 2.4, dmg * 1.2, 0, 0.35 + k * 0.05, 0x5db4ff, { scorch: true });
+          this.queueAoe(cx, cz, 2.4, dmg * 1.2, 0, 0.35 + k * 0.05, boltColor, { scorch: true });
         }
         const ex0 = this.player.position.x + dir.x * STORM_LANCE_LENGTH;
         const ez0 = this.player.position.z + dir.z * STORM_LANCE_LENGTH;
-        this.effects.burst(ex0, 1.0, ez0, { color: 0xbfe2ff, count: 22, speed: 7, life: 0.5, size: 1.1 });
-        this.effects.ring(ex0, ez0, 0x5db4ff, 3.5, 0.5);
+        this.effects.burst(ex0, 1.0, ez0, { color: red ? 0xffd9b0 : 0xbfe2ff, count: 22, speed: 7, life: 0.5, size: 1.1 });
+        this.effects.ring(ex0, ez0, boltColor, 3.5, 0.5);
         this.effects.scorch(ex0, ez0, 3);
         this.camShake = Math.min(0.9, this.camShake + 0.35);
         this.sound.storm();
@@ -2538,6 +2545,27 @@ export class Game {
         this.chargeCast(dir, 0x7ce7ff, 0.7);
         this.camShake = Math.min(0.9, this.camShake + 0.3);
         this.sound.beam();
+        break;
+      }
+      case 'voltaic_snare': {
+        const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+        if (!aim) return;
+        const dx = aim.x - this.player.position.x;
+        const dz = aim.z - this.player.position.z;
+        if (Math.hypot(dx, dz) > 16) {
+          this.showToast('Snare out of range (16m).');
+          return;
+        }
+        this.player.faceInstant(aim.clone().add(this.player.position));
+        this.player.castAnim = 1;
+        this.snareTrap.cast(this.player.position, aim.x, aim.z);
+        // Trap snaps open on landing: heavy burst, then burn ticks + slow.
+        this.queueAoe(aim.x, aim.z, SNARE_RADIUS, dmg * 2.5, 2, 0.4, 0x8f6bff);
+        for (let k = 0; k < 3; k++) {
+          this.queueAoe(aim.x, aim.z, SNARE_RADIUS, dmg * 0.8, 2, 0.8 + k * 0.5, 0x8f6bff);
+        }
+        this.effects.ring(aim.x, aim.z, 0x8f6bff, SNARE_RADIUS, 0.5);
+        this.sound.storm();
         break;
       }
       default:
@@ -3751,6 +3779,7 @@ export class Game {
     this.effects.update(dt);
     this.meteorFx.update(dt);
     this.meteorRocks.update(dt);
+    this.snareTrap.update(dt);
     this.frostLance.update(dt);
     this.stormLance.update(dt);
     this.novaBeam.update(dt);

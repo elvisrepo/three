@@ -350,9 +350,19 @@ function createBoltMaterial(glow: boolean, timeUniform: { value: number }): THRE
 
 export const STORM_LANCE_LENGTH = 12;
 
+export interface StormPalette {
+  core: number;
+  inner: number;
+  outer: number;
+  halo: number;
+}
+
+/** Authored storm blue (default) + ember red for Pyromancer. */
+export const STORM_BLUE: StormPalette = { core: 0xffffff, inner: 0xc7ebff, outer: 0x389eff, halo: 0x0a3dc7 };
+export const STORM_RED: StormPalette = { core: 0xfff6ec, inner: 0xffd9b0, outer: 0xff7b2e, halo: 0x7a1e00 };
+
 /** Storm Lance bolt: travel 0.35s, hold guttering 0.7s, blow out 0.4s. */
-export class StormLance {
-  private meshes: THREE.Mesh[] = [];
+export class StormLance {  private meshes: THREE.Mesh[] = [];
   private materials: THREE.ShaderMaterial[] = [];
   private timeUniform = { value: 0 };
   private active = false;
@@ -372,8 +382,13 @@ export class StormLance {
     }
   }
 
-  /** Fire from the caster's hand along dir (normalized, y=0). */
-  cast(origin: THREE.Vector3, dir: THREE.Vector3): void {
+  /** Fire from the caster's hand along dir (normalized, y=0). Optional
+   *  palette override (hex) — default is the authored storm blue. */
+  cast(
+    origin: THREE.Vector3,
+    dir: THREE.Vector3,
+    palette?: StormPalette,
+  ): void {
     const from = new THREE.Vector3(origin.x, 1.3, origin.z);
     const to = new THREE.Vector3(origin.x + dir.x * STORM_LANCE_LENGTH, 0.8, origin.z + dir.z * STORM_LANCE_LENGTH);
     const side = new THREE.Vector3(-dir.z, 0, dir.x);
@@ -384,6 +399,12 @@ export class StormLance {
       mat.uniforms.uSeed.value = Math.random() * 100;
       mat.uniforms.uProgress.value = 0;
       mat.uniforms.uFade.value = 1;
+      // Shared materials keep the last palette — always set, defaulting blue.
+      const pal = palette ?? STORM_BLUE;
+      (mat.uniforms.uColorCore.value as THREE.Color).setHex(pal.core);
+      (mat.uniforms.uColorInner.value as THREE.Color).setHex(pal.inner);
+      (mat.uniforms.uColorOuter.value as THREE.Color).setHex(pal.outer);
+      (mat.uniforms.uColorHalo.value as THREE.Color).setHex(pal.halo);
     }
     for (const mesh of this.meshes) mesh.visible = true;
     this.active = true;

@@ -65,6 +65,9 @@ export const JOBS: JobDef[] = [
     bonus: { maxHp: 20, damage: 6, crit: 0.02 },
     skill: { id: 'multishot', name: 'Multishot', icon: '🎯', cooldown: 5, cost: 12, desc: '3 arrows, 1.3x each.' },
     ultimate: { id: 'arrow_storm', name: 'Arrow Storm', icon: '🏹', cooldown: 25, cost: 30, desc: '12 arrows radial, 1.5x each.' },
+    extras: [
+      { skill: { id: 'voltaic_snare', name: 'Voltaic Snare', icon: '⚡', cooldown: 14, cost: 26, desc: 'Snare trap: 2.5x + 3x 0.8x ticks + slow, 4.5m.' }, level: 18 },
+    ],
   },
   {
     id: 'assassin',
@@ -85,6 +88,9 @@ export const JOBS: JobDef[] = [
     bonus: { maxHp: 15, damage: 6, crit: 0 },
     skill: { id: 'meteor', name: 'Meteor', icon: '☄️', cooldown: 8, cost: 20, desc: '3.2x fire blast after 0.5s, drags foes in.' },
     ultimate: { id: 'cataclysm', name: 'Cataclysm', icon: '🌋', cooldown: 30, cost: 30, desc: '3 staggered meteors, 3x each.' },
+    extras: [
+      { skill: { id: 'storm_lance', name: 'Storm Lance', icon: '🌩️', cooldown: 12, cost: 28, desc: 'Lightning bundle: 4x 1.2x down a line.' }, level: 20 },
+    ],
   },
   {
     id: 'cryomancer',
