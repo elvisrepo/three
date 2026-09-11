@@ -34,6 +34,7 @@ import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL, type JobExtraSkill } from '
 import { FrostLance, FROST_LANCE_LENGTH } from '../entities/FrostLance';
 import { StormLance, STORM_LANCE_LENGTH } from '../entities/StormLance';
 import { NovaBeam, NOVA_BEAM_LENGTH } from '../entities/NovaBeam';
+import { MeteorRocks } from '../entities/MeteorRocks';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
@@ -167,6 +168,7 @@ export class Game {
   private frostLance!: FrostLance;
   private stormLance!: StormLance;
   private novaBeam!: NovaBeam;
+  private meteorRocks!: MeteorRocks;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -422,6 +424,7 @@ export class Game {
     for (let i = 0; i < 2; i++) this.chargeUps.push(new ChargeUp(this.scene));
     for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
     this.meteorFx = new MeteorFx(this.scene);
+    this.meteorRocks = new MeteorRocks(this.scene);
     this.frostLance = new FrostLance(this.scene);
     this.stormLance = new StormLance(this.scene);
     this.novaBeam = new NovaBeam(this.scene);
@@ -1285,6 +1288,7 @@ export class Game {
     }
     this.pendingAoe = [];
     this.meteorFx.stopAll();
+    this.meteorRocks.clear();
     this.frostLance.clear();
     this.stormLance.clear();
     this.novaBeam.clear();
@@ -2349,6 +2353,7 @@ export class Game {
         if (!aim) return;
         const m = this.queueAoe(aim.x, aim.z, 3.5, dmg * 3.2 * this.player.fireMult, 0, 0.5, 0xff6a00, { flash: '#ff8a2e', scorch: true, meteor: true });
         m.qFall = this.meteorFx.startFall(aim.x, aim.z);
+        this.meteorRocks.cast(aim.x, aim.z, 0.5);
         this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 0.5);
         this.player.castAnim = 1;
         this.sound.fireball();
@@ -2441,6 +2446,7 @@ export class Game {
         for (const [sx, sz, delay] of spots) {
           const c = this.queueAoe(sx, sz, 3.5, dmg * 3 * this.player.fireMult, 0, delay, 0xff6a00, { flash: '#ff8a2e', scorch: true, sfx: 'slam', meteor: true });
           c.qFall = this.meteorFx.startFall(sx, sz);
+          this.meteorRocks.cast(sx, sz, delay);
         }
         this.chargeCast(aim.clone().sub(this.player.position).setY(0).normalize(), 0xff6a00, 1.2);
         this.player.castAnim = 1;
@@ -3744,6 +3750,7 @@ export class Game {
     this.numbers.update(dt);
     this.effects.update(dt);
     this.meteorFx.update(dt);
+    this.meteorRocks.update(dt);
     this.frostLance.update(dt);
     this.stormLance.update(dt);
     this.novaBeam.update(dt);
