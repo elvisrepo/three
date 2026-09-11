@@ -38,7 +38,7 @@ export const RIFT_TIERS: RiftTier[] = [
   {
     tier: 1,
     keyName: 'Cracked Rift Key',
-    icon: '🌀',
+    icon: '🗝️',
     minLevel: 35,
     monsterMin: 35,
     monsterMax: 37,
@@ -53,7 +53,7 @@ export const RIFT_TIERS: RiftTier[] = [
   {
     tier: 2,
     keyName: 'Glowing Rift Key',
-    icon: '🌪️',
+    icon: '🔑',
     minLevel: 38,
     monsterMin: 38,
     monsterMax: 40,
@@ -68,7 +68,7 @@ export const RIFT_TIERS: RiftTier[] = [
   {
     tier: 3,
     keyName: 'Infernal Rift Key',
-    icon: '🔥',
+    icon: '🔑',
     minLevel: 40,
     monsterMin: 41,
     monsterMax: 43,
@@ -106,15 +106,17 @@ export function keyTier(baseId: string): number {
   return Number.isFinite(n) ? n : 1;
 }
 
-/** Rift Key consumable: click in the bag to open that tier (consumed on use). */
-export function makeRiftKey(tier: number, rarity: ItemRarity = 'magic'): ItemInstance {
+/** Rift Key consumable: click in the bag to open that tier (consumed on use).
+ *  Rarity follows the tier (blue → gold → orange) so keys read at a glance. */
+export function makeRiftKey(tier: number, rarity?: ItemRarity): ItemInstance {
   const def = riftTier(tier);
+  const r = rarity ?? (tier >= 3 ? 'legendary' : tier === 2 ? 'rare' : 'magic');
   return {
     uid: makeUid(),
     baseId: riftKeyBaseId(tier),
     name: `${def.keyName} (T${def.tier})`,
     slot: 'ring',
-    rarity,
+    rarity: r,
     levelReq: def.minLevel,
     dmg: 0,
     armor: 0,

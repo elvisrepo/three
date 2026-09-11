@@ -329,6 +329,7 @@ export class Game {
   private elCdnDodge: HTMLElement | null = null;
   private elCdnSkill2: HTMLElement | null = null;
   private elCompare: HTMLElement | null = null;
+  private elLootTip: HTMLElement | null = null;
   private elXpRate: HTMLElement | null = null;
   private elFade: HTMLElement | null = null;
   private hudTimer = 0;
@@ -810,6 +811,7 @@ export class Game {
     this.elTpSlot = $('skill-tp');
     this.elTpCount = $('tp-count');
     this.elCompare = $('compare-panel');
+    this.elLootTip = $('loot-tip');
     this.elXpRate = $('stat-xprate');
     this.minimap = $('minimap') as HTMLCanvasElement | null;
     this.mmCtx = this.minimap?.getContext('2d') ?? null;
@@ -1810,6 +1812,7 @@ export class Game {
           this.player.setTarget(o.position);
           this.pickupUid = drop.item.uid;
           this.showMarker(o.position, 0xffd21f);
+          if (this.elLootTip) this.elLootTip.style.display = 'none';
           return;
         }
         if (o) {
@@ -1864,6 +1867,34 @@ export class Game {
     const lootMeshes = this.loot.drops.map((d) => d.group);
     const hits = this.raycaster.intersectObjects([...liveGroups, ...npcMeshes, ...lootMeshes, ...this.dummies], true);
     this.renderer.domElement.style.cursor = hits.length > 0 ? 'pointer' : 'crosshair';
+    this.updateLootTip(hits, clientX, clientY);
+  }
+
+  /** Ground-loot name label: follows the cursor while hovering a crystal. */
+  private updateLootTip(hits: THREE.Intersection[], clientX: number, clientY: number): void {
+    if (!this.elLootTip) return;
+    let label: string | null = null;
+    for (const h of hits) {
+      let o: THREE.Object3D | null = h.object;
+      while (o && o.parent !== this.scene) o = o.parent;
+      const drop = o ? this.loot.drops.find((d) => d.group === o) : undefined;
+      if (drop) {
+        const it = drop.item;
+        const lvl = it.kind === 'gear' ? ` <span class="dim">Lv${it.levelReq}</span>` : '';
+        label = `<span style="color:${RARITY_COLOR[it.rarity]}">${it.icon} ${it.name}</span>${lvl}`;
+        break;
+      }
+      // First hit isn't loot — label would lie about what's under the cursor.
+      break;
+    }
+    if (!label) {
+      this.elLootTip.style.display = 'none';
+      return;
+    }
+    this.elLootTip.innerHTML = label;
+    this.elLootTip.style.display = 'block';
+    this.elLootTip.style.left = `${Math.min(window.innerWidth - 220, clientX + 14)}px`;
+    this.elLootTip.style.top = `${Math.max(8, clientY - 34)}px`;
   }
 
   private showMarker(p: THREE.Vector3, color: number): void {

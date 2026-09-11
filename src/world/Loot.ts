@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RARITY_COLOR, type ItemInstance } from '../items/Items';
+import { isRiftKey } from '../data/Rifts';
 import { buildAxe } from '../items/ItemModels';
 
 interface Drop {
@@ -12,6 +13,31 @@ interface Drop {
 
 /** Grace period before a fresh drop becomes grabbable (no instant re-pickup). */
 export const PICKUP_DELAY = 1.0;
+
+/** Rift Key ground mesh: golden bow + shaft + teeth (spins/bobs like crystals). */
+function buildKey(): THREE.Group {
+  const gold = new THREE.MeshStandardMaterial({
+    color: 0xffd21f,
+    emissive: 0xa06a00,
+    emissiveIntensity: 0.55,
+    metalness: 0.85,
+    roughness: 0.3,
+  });
+  const key = new THREE.Group();
+  const bow = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.07, 10, 20), gold);
+  bow.position.y = 0.32;
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.62, 8), gold);
+  shaft.position.y = -0.12;
+  const tooth1 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.07, 0.07), gold);
+  tooth1.position.set(0.11, -0.3, 0);
+  const tooth2 = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.07, 0.07), gold);
+  tooth2.position.set(0.085, -0.14, 0);
+  key.add(bow, shaft, tooth1, tooth2);
+  key.traverse((o) => {
+    if ((o as THREE.Mesh).isMesh) (o as THREE.Mesh).castShadow = true;
+  });
+  return key;
+}
 
 function disposeGroup(g: THREE.Object3D): void {
   g.traverse((o) => {
@@ -41,6 +67,9 @@ export class LootManager {
       axe.position.y = 0.75;
       axe.rotation.z = 0.12;
       gem = axe;
+    } else if (isRiftKey(item.baseId)) {
+      gem = buildKey();
+      gem.position.y = 0.75;
     } else {
       const crystal = new THREE.Mesh(
         new THREE.OctahedronGeometry(item.rarity === 'legendary' ? 0.5 : 0.35),

@@ -622,6 +622,21 @@ html, body, #app {
   pointer-events: none;
 }
 
+/* Ground-loot hover label (follows the cursor, Game positions it). */
+#loot-tip {
+  position: absolute;
+  z-index: 40;
+  background: rgba(8, 12, 20, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+}
+#loot-tip .dim { font-weight: 400; }
+
 .char-head { font-size: 15px; margin-bottom: 2px; }
 
 .stat-points {
