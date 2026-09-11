@@ -29,10 +29,12 @@ export function charListHtml(chars: CharacterSave[], zoneName: (id: string) => s
     return '<div class="char-empty">No heroes yet — create one below.</div>';
   }
   return chars.map((c) => {
-    const cls = jobById(c.job)?.name ?? c.baseClass;
+    const job = jobById(c.job);
+    const cls = job?.name ?? c.baseClass;
+    const icon = job?.icon ?? CLASS_ICON[c.baseClass] ?? '⚔️';
     return `<div class="char-row">
       <div class="char-top">
-        <div class="char-avatar">${CLASS_ICON[c.baseClass] ?? '⚔️'}</div>
+        <div class="char-avatar">${icon}</div>
         <div class="char-main">
           <div class="char-title"><b>${c.name}</b><span class="lvl">Lv${c.level}</span></div>
           <div class="dim">${cls} · ${zoneName(c.zoneId)} · x${c.xpRate ?? 1} EXP</div>
