@@ -360,25 +360,29 @@ export interface StormPalette {
 /** Authored storm blue (default) + ember red for Pyromancer. */
 export const STORM_BLUE: StormPalette = { core: 0xffffff, inner: 0xc7ebff, outer: 0x389eff, halo: 0x0a3dc7 };
 export const STORM_RED: StormPalette = { core: 0xfff6ec, inner: 0xffd9b0, outer: 0xff7b2e, halo: 0x7a1e00 };
-
 /** Storm Lance bolt: travel 0.35s, hold guttering 0.7s, blow out 0.4s. */
-export class StormLance {  private meshes: THREE.Mesh[] = [];
-  private materials: THREE.ShaderMaterial[] = [];
+export class StormLance {
+  private slots: { meshes: THREE.Mesh[]; materials: THREE.ShaderMaterial[]; active: boolean; age: number }[] = [];
   private timeUniform = { value: 0 };
-  private active = false;
-  private age = 0;
+  private cursor = 0;
 
   constructor(scene: THREE.Scene) {
     const geometry = createBoltRibbon();
-    for (const glow of [false, true]) {
-      const mat = createBoltMaterial(glow, this.timeUniform);
-      const mesh = new THREE.Mesh(geometry, mat);
-      mesh.frustumCulled = false;
-      mesh.visible = false;
-      mesh.renderOrder = 15;
-      scene.add(mesh);
-      this.meshes.push(mesh);
-      this.materials.push(mat);
+    // 3 pooled casts: chain lightning forks need concurrent bolts.
+    for (let s = 0; s < 3; s++) {
+      const meshes: THREE.Mesh[] = [];
+      const materials: THREE.ShaderMaterial[] = [];
+      for (const glow of [false, true]) {
+        const mat = createBoltMaterial(glow, this.timeUniform);
+        const mesh = new THREE.Mesh(geometry, mat);
+        mesh.frustumCulled = false;
+        mesh.visible = false;
+        mesh.renderOrder = 15;
+        scene.add(mesh);
+        meshes.push(mesh);
+        materials.push(mat);
+      }
+      this.slots.push({ meshes, materials, active: false, age: 0 });
     }
   }
 
@@ -389,10 +393,24 @@ export class StormLance {  private meshes: THREE.Mesh[] = [];
     dir: THREE.Vector3,
     palette?: StormPalette,
   ): void {
+    this.fire(origin, new THREE.Vector3(origin.x + dir.x * STORM_LANCE_LENGTH, 0.8, origin.z + dir.z * STORM_LANCE_LENGTH), palette);
+  }
+
+  /** Fire point-to-point (chain forks). Origin/target are ground positions. */
+  fire(
+    origin: THREE.Vector3,
+    target: THREE.Vector3,
+    palette?: StormPalette,
+  ): void {
+    const slot = this.slots[this.cursor];
+    this.cursor = (this.cursor + 1) % this.slots.length;
     const from = new THREE.Vector3(origin.x, 1.3, origin.z);
-    const to = new THREE.Vector3(origin.x + dir.x * STORM_LANCE_LENGTH, 0.8, origin.z + dir.z * STORM_LANCE_LENGTH);
-    const side = new THREE.Vector3(-dir.z, 0, dir.x);
-    for (const mat of this.materials) {
+    const to = new THREE.Vector3(target.x, 0.8, target.z);
+    const flat = new THREE.Vector3(to.x - from.x, 0, to.z - from.z);
+    const side = flat.lengthSq() > 1e-6
+      ? new THREE.Vector3(-flat.z, 0, flat.x).normalize()
+      : new THREE.Vector3(1, 0, 0);
+    for (const mat of slot.materials) {
       mat.uniforms.uOrigin.value.copy(from);
       mat.uniforms.uTarget.value.copy(to);
       mat.uniforms.uSide.value.copy(side);
@@ -406,30 +424,40 @@ export class StormLance {  private meshes: THREE.Mesh[] = [];
       (mat.uniforms.uColorOuter.value as THREE.Color).setHex(pal.outer);
       (mat.uniforms.uColorHalo.value as THREE.Color).setHex(pal.halo);
     }
-    for (const mesh of this.meshes) mesh.visible = true;
-    this.active = true;
-    this.age = 0;
+    for (const mesh of slot.meshes) mesh.visible = true;
+    slot.active = true;
+    slot.age = 0;
   }
 
   update(dt: number): void {
-    if (!this.active) return;
-    this.age += dt;
-    this.timeUniform.value += dt;
-    // Travel, hold (restrike/flicker ride uTime for free), blow out.
-    const progress = this.age < 0.35 ? this.age / 0.35 : 1;
-    const fade = this.age < 1.05 ? 1 : Math.max(0, 1 - (this.age - 1.05) / 0.4);
-    for (const mat of this.materials) {
-      mat.uniforms.uProgress.value = progress;
-      mat.uniforms.uFade.value = fade;
+    let ticking = false;
+    for (const slot of this.slots) {
+      if (!slot.active) continue;
+      ticking = true;
+      break;
     }
-    if (this.age >= 1.45) {
-      this.active = false;
-      for (const mesh of this.meshes) mesh.visible = false;
+    if (ticking) this.timeUniform.value += dt;
+    for (const slot of this.slots) {
+      if (!slot.active) continue;
+      slot.age += dt;
+      // Travel, hold (restrike/flicker ride uTime for free), blow out.
+      const progress = slot.age < 0.35 ? slot.age / 0.35 : 1;
+      const fade = slot.age < 1.05 ? 1 : Math.max(0, 1 - (slot.age - 1.05) / 0.4);
+      for (const mat of slot.materials) {
+        mat.uniforms.uProgress.value = progress;
+        mat.uniforms.uFade.value = fade;
+      }
+      if (slot.age >= 1.45) {
+        slot.active = false;
+        for (const mesh of slot.meshes) mesh.visible = false;
+      }
     }
   }
 
   clear(): void {
-    this.active = false;
-    for (const mesh of this.meshes) mesh.visible = false;
+    for (const slot of this.slots) {
+      slot.active = false;
+      for (const mesh of slot.meshes) mesh.visible = false;
+    }
   }
 }

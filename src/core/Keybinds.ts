@@ -1,7 +1,7 @@
 /** Remappable action keybinds (movement keys stay fixed: WASD/arrows). */
 
 export type BindAction =
-  | 'fire' | 'job' | 'ult' | 'skill4' | 'skill5' | 'skill6' | 'potion' | 'blink' | 'dodge'
+  | 'fire' | 'job' | 'ult' | 'skill4' | 'skill5' | 'skill6' | 'skill7' | 'potion' | 'blink' | 'dodge'
   | 'interact' | 'tp' | 'bag' | 'char' | 'quest' | 'mute';
 
 export const BIND_LABELS: Record<BindAction, string> = {
@@ -11,6 +11,7 @@ export const BIND_LABELS: Record<BindAction, string> = {
   skill4: 'Skill 4',
   skill5: 'Skill 5',
   skill6: 'Skill 6',
+  skill7: 'Skill 7',
   potion: 'Potion',
   blink: 'Blink',
   dodge: 'Dodge',
@@ -23,7 +24,7 @@ export const BIND_LABELS: Record<BindAction, string> = {
 };
 
 export const BIND_ORDER: BindAction[] = [
-  'fire', 'job', 'ult', 'skill4', 'skill5', 'skill6', 'potion', 'blink', 'dodge', 'interact', 'tp', 'bag', 'char', 'quest', 'mute',
+  'fire', 'job', 'ult', 'skill4', 'skill5', 'skill6', 'skill7', 'potion', 'blink', 'dodge', 'interact', 'tp', 'bag', 'char', 'quest', 'mute',
 ];
 
 export const DEFAULT_BINDS: Record<BindAction, string> = {
@@ -33,6 +34,7 @@ export const DEFAULT_BINDS: Record<BindAction, string> = {
   skill4: 'Digit4',
   skill5: 'Digit5',
   skill6: 'Digit6',
+  skill7: 'Digit7',
   potion: 'KeyQ',
   blink: 'KeyE',
   dodge: 'Space',

@@ -45,6 +45,9 @@ export const JOBS: JobDef[] = [
     bonus: { maxHp: 45, damage: 4, crit: 0 },
     skill: { id: 'shield_throw', name: 'Shield Throw', icon: '🛡️', cooldown: 5, cost: 12, desc: 'Throw shield for 2.6x damage.' },
     ultimate: { id: 'judgment', name: 'Judgment', icon: '⚖️', cooldown: 25, cost: 30, desc: 'Heavenly slam: 5x in 6m.' },
+    extras: [
+      { skill: { id: 'blade_orbit', name: 'Blade Orbit', icon: '🌀', cooldown: 14, cost: 24, desc: '3 orbiting blades 4s: 0.7x ticks around you.' }, level: 18 },
+    ],
   },
   {
     id: 'berserker',
@@ -55,6 +58,9 @@ export const JOBS: JobDef[] = [
     bonus: { maxHp: 20, damage: 8, crit: 0.02 },
     skill: { id: 'whirlwind', name: 'Whirlwind', icon: '🌪️', cooldown: 6, cost: 14, desc: 'Spin 1.2s: 1.0x per spin to all within 4m. Move while spinning.' },
     ultimate: { id: 'rampage', name: 'Rampage', icon: '😡', cooldown: 30, cost: 30, desc: '8s of double damage.' },
+    extras: [
+      { skill: { id: 'gore_hook', name: 'Gore Hook', icon: '🪝', cooldown: 10, cost: 20, desc: 'Yank foes (not bosses) within 8m to you + 2x burst.' }, level: 18 },
+    ],
   },
   {
     id: 'hunter',
@@ -67,6 +73,7 @@ export const JOBS: JobDef[] = [
     ultimate: { id: 'arrow_storm', name: 'Arrow Storm', icon: '🏹', cooldown: 25, cost: 30, desc: '12 arrows radial, 1.5x each.' },
     extras: [
       { skill: { id: 'voltaic_snare', name: 'Voltaic Snare', icon: '⚡', cooldown: 14, cost: 26, desc: 'Snare trap: 2.5x + 3x 0.8x ticks + slow, 4.5m.' }, level: 18 },
+      { skill: { id: 'ember_snare', name: 'Ember Snare', icon: '🪤', cooldown: 14, cost: 26, desc: 'Ember trap: 2.5x + burn ticks, 4.5m.' }, level: 25 },
     ],
   },
   {
@@ -90,6 +97,7 @@ export const JOBS: JobDef[] = [
     ultimate: { id: 'cataclysm', name: 'Cataclysm', icon: '🌋', cooldown: 30, cost: 30, desc: '3 staggered meteors, 3x each.' },
     extras: [
       { skill: { id: 'storm_lance', name: 'Storm Lance', icon: '🌩️', cooldown: 12, cost: 28, desc: 'Lightning bundle: 4x 1.2x down a line.' }, level: 20 },
+      { skill: { id: 'flame_dash', name: 'Flame Dash', icon: '🔥', cooldown: 8, cost: 18, desc: 'Dash 8m, burning trail ticks behind you.' }, level: 25 },
       { skill: { id: 'void_rift', name: 'Void Rift', icon: '🌌', cooldown: 18, cost: 32, desc: 'Void portal: drags foes in, 6x 0.8x ticks.' }, level: 30 },
     ],
   },
@@ -106,6 +114,7 @@ export const JOBS: JobDef[] = [
       { skill: { id: 'frost_lance', name: 'Frost Lance', icon: '💠', cooldown: 9, cost: 22, desc: 'Ice lance: 3x 1.1x blasts + slow in a line.' }, level: 15 },
       { skill: { id: 'storm_lance', name: 'Storm Lance', icon: '🌩️', cooldown: 12, cost: 28, desc: 'Lightning bundle: 4x 1.2x down a line.' }, level: 25 },
       { skill: { id: 'nova_beam', name: 'Nova Beam', icon: '🔆', cooldown: 20, cost: 35, desc: 'Burning column: 5x 1.0x ticks + 2x impact.' }, level: 30 },
+      { skill: { id: 'chain_lightning', name: 'Chain Lightning', icon: '⚡', cooldown: 10, cost: 24, desc: 'Forks 4 targets: 1.5x fading per jump.' }, level: 32 },
     ],
   },
 ];

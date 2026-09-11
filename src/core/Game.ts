@@ -35,7 +35,7 @@ import { FrostLance, FROST_LANCE_LENGTH } from '../entities/FrostLance';
 import { StormLance, STORM_LANCE_LENGTH, STORM_RED } from '../entities/StormLance';
 import { NovaBeam, NOVA_BEAM_LENGTH } from '../entities/NovaBeam';
 import { MeteorRocks } from '../entities/MeteorRocks';
-import { SnareTrap, SNARE_RADIUS } from '../entities/SnareTrap';
+import { SnareTrap, SNARE_RADIUS, SNARE_EMBER } from '../entities/SnareTrap';
 import { VoidRift, VOID_RIFT_RADIUS } from '../entities/VoidRift';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
@@ -242,14 +242,20 @@ export class Game {
   private skill3Timer = 0;
   private skill3CdMax = 1;
   /** Extra bar slots 4/5/6 (job extras) — parallel timers. */
-  private extraTimers = [0, 0, 0];
-  private extraCdMax = [1, 1, 1];
+  private extraTimers = [0, 0, 0, 0];
+  private extraCdMax = [1, 1, 1, 1];
   private ultHintShown = false;
-  private extraHintShown = [false, false, false];
+  private extraHintShown = [false, false, false, false];
   private whirlTimer = 0;
   /** Whirlwind: time to next damage spin + damage per spin (stored at cast). */
   private whirlTick = 0;
   private whirlDmg = 0;
+  /** Blade Orbit (knight extra): 3 spectral blades circling the player. */
+  private orbitTimer = 0;
+  private orbitTick = 0;
+  private orbitAngle = 0;
+  private orbitDmg = 0;
+  private orbitBlades: THREE.Group[] = [];
   /** Persistent orbital flame bands + fire light (Diablo-style swirl, toggled per spin). */
   private whirlFx!: THREE.Group;
   private whirlBands: THREE.Mesh<THREE.TorusGeometry, THREE.MeshBasicMaterial>[] = [];
@@ -341,9 +347,9 @@ export class Game {
   private elSkill2Cd: HTMLElement | null = null;
   private elSkill3: HTMLElement | null = null;
   private elSkill3Cd: HTMLElement | null = null;
-  private elExtra: (HTMLElement | null)[] = [null, null, null];
-  private elExtraCd: (HTMLElement | null)[] = [null, null, null];
-  private elCdnExtra: (HTMLElement | null)[] = [null, null, null];
+  private elExtra: (HTMLElement | null)[] = [null, null, null, null];
+  private elExtraCd: (HTMLElement | null)[] = [null, null, null, null];
+  private elCdnExtra: (HTMLElement | null)[] = [null, null, null, null];
   private elCdnSkill3: HTMLElement | null = null;
   private elCdnFire: HTMLElement | null = null;
   private elCdnBlink: HTMLElement | null = null;
@@ -379,6 +385,7 @@ export class Game {
     this.setupNPCs();
     this.setupClickMarker();
     this.setupWhirlwind();
+    this.setupOrbit();
     this.setupRampage();
     this.bindInput();
     this.cacheHud();
@@ -622,6 +629,27 @@ export class Game {
 
   /** Diablo-style whirlwind: 3 stacked flame bands + save-point dress (scrolling
    *  pillar, ground rune circle, rising embers) + fire light. Built once, faded per spin. */
+  private setupOrbit(): void {
+    // 3 spectral blades: steel bar + glowing tip, positioned per-frame on a ring.
+    for (let k = 0; k < 3; k++) {
+      const g = new THREE.Group();
+      const steel = new THREE.Mesh(
+        new THREE.BoxGeometry(0.14, 0.1, 1.2),
+        new THREE.MeshStandardMaterial({ color: 0x9aa3ad, metalness: 0.8, roughness: 0.3 }),
+      );
+      const tip = new THREE.Mesh(
+        new THREE.ConeGeometry(0.09, 0.3, 6),
+        new THREE.MeshBasicMaterial({ color: 0x7ce7ff }),
+      );
+      tip.rotation.x = Math.PI / 2;
+      tip.position.z = 0.72;
+      g.add(steel, tip);
+      g.visible = false;
+      this.scene.add(g);
+      this.orbitBlades.push(g);
+    }
+  }
+
   private setupWhirlwind(): void {
     const g = new THREE.Group();
     const defs = [
@@ -830,12 +858,12 @@ export class Game {
     this.elSkill2Cd = $('cd-skill2');
     this.elSkill3 = $('skill-ult');
     this.elSkill3Cd = $('cd-skill3');
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       this.elExtra[i] = $(`skill-extra${i}`);
       this.elExtraCd[i] = $(`cd-extra${i}`);
     }
     this.elCdnSkill3 = $('cdn-skill3');
-    for (let i = 0; i < 3; i++) this.elCdnExtra[i] = $(`cdn-extra${i}`);
+    for (let i = 0; i < 4; i++) this.elCdnExtra[i] = $(`cdn-extra${i}`);
     this.elCdnFire = $('cdn-fire');
     this.elCdnBlink = $('cdn-blink');
     this.elCdnDodge = $('cdn-dodge');
@@ -1151,7 +1179,7 @@ export class Game {
     this.currentSaveId = makeCharId();
     this.sanctumHintShown = false;
     this.ultHintShown = false;
-    this.extraHintShown = [false, false, false];
+    this.extraHintShown = [false, false, false, false];
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone('city');
@@ -1166,7 +1194,7 @@ export class Game {
     this.currentSaveId = s.id;
     this.sanctumHintShown = false;
     this.ultHintShown = false;
-    this.extraHintShown = [false, false, false];
+    this.extraHintShown = [false, false, false, false];
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone(s.zoneId, { pos: [s.pos[0], s.pos[1]] });
@@ -1314,6 +1342,9 @@ export class Game {
     // Never carry a spin across a zone change (stale pose + stuck FX).
     this.whirlTimer = 0;
     this.whirlTick = 0;
+    this.orbitTimer = 0;
+    this.orbitTick = 0;
+    for (const b of this.orbitBlades) b.visible = false;
     this.whirlFade = 0;
     this.player.spinLock = false;
     this.player.spinPose = false;
@@ -1707,6 +1738,7 @@ export class Game {
       else if (e.code === b.skill4) this.castExtra(0);
       else if (e.code === b.skill5) this.castExtra(1);
       else if (e.code === b.skill6) this.castExtra(2);
+      else if (e.code === b.skill7) this.castExtra(3);
       else if (e.code === b.potion) this.tryPotion();
       else if (e.code === b.bag) this.toggleInventory();
       else if (e.code === b.char) this.toggleChar();
@@ -2257,13 +2289,13 @@ export class Game {
   }
 
   private refreshExtraSlots(): void {
-    for (let i = 0; i < 3; i++) this.refreshExtraSlot(i);
+    for (let i = 0; i < 4; i++) this.refreshExtraSlot(i);
   }
 
   /** One-time extra-skill unlock toasts (slots refresh every zone load). */
   private hintExtras(): void {
     if (!this.started) return;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       if (!this.extraUnlocked(i) || this.extraHintShown[i]) continue;
       this.extraHintShown[i] = true;
       const ex = this.extraAt(i);
@@ -2573,6 +2605,35 @@ export class Game {
         this.sound.beam();
         break;
       }
+      case 'blade_orbit': {
+        this.orbitDmg = dmg;
+        this.orbitTimer = 4;
+        this.orbitTick = 0;
+        this.orbitAngle = 0;
+        this.player.swingAnim = 1;
+        this.effects.ring(this.player.position.x, this.player.position.z, 0x7ce7ff, 2.4, 0.4);
+        this.sound.swing();
+        break;
+      }
+      case 'gore_hook': {        // Yank every non-boss foe within 8m into cleave range, then burst.
+        const pp = this.player.position;
+        for (const m of this.monsters) {
+          if (!m.alive || m.isBoss) continue;
+          const dx = pp.x - m.position.x;
+          const dz = pp.z - m.position.z;
+          const d = Math.hypot(dx, dz);
+          if (d > 8 || d < 0.5) continue;
+          m.position.x = THREE.MathUtils.clamp(pp.x - (dx / d) * 1.6, -29, 29);
+          m.position.z = THREE.MathUtils.clamp(pp.z - (dz / d) * 1.6, -29, 29);
+        }
+        this.player.swingAnim = 1;
+        this.effects.ring(pp.x, pp.z, 0xff5a5a, 8, 0.4);
+        this.effects.burst(pp.x, 1.2, pp.z, { color: 0xff5a5a, count: 18, speed: 6, life: 0.4, size: 1 });
+        this.hitAllInRadius(pp, 3, dmg * 2.0, 0, 0xff5a5a);
+        this.camShake = Math.min(0.9, this.camShake + 0.35);
+        this.sound.swing();
+        break;
+      }
       case 'voltaic_snare': {
         const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
         if (!aim) return;
@@ -2591,6 +2652,82 @@ export class Game {
           this.queueAoe(aim.x, aim.z, SNARE_RADIUS, dmg * 0.8, 2, 0.8 + k * 0.5, 0x8f6bff);
         }
         this.effects.ring(aim.x, aim.z, 0x8f6bff, SNARE_RADIUS, 0.5);
+        this.sound.storm();
+        break;
+      }
+      case 'ember_snare': {
+        const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+        if (!aim) return;
+        const dx = aim.x - this.player.position.x;
+        const dz = aim.z - this.player.position.z;
+        if (Math.hypot(dx, dz) > 16) {
+          this.showToast('Snare out of range (16m).');
+          return;
+        }
+        this.player.faceInstant(aim.clone().add(this.player.position));
+        this.player.castAnim = 1;
+        this.snareTrap.cast(this.player.position, aim.x, aim.z, SNARE_EMBER);
+        // Same trap bones, ember heart: burn ticks instead of lightning + slow.
+        this.queueAoe(aim.x, aim.z, SNARE_RADIUS, dmg * 2.5, 0, 0.4, 0xff7b2e, { scorch: true });
+        for (let k = 0; k < 3; k++) {
+          this.queueAoe(aim.x, aim.z, SNARE_RADIUS, dmg * 0.8, 0, 0.8 + k * 0.5, 0xff7b2e, { scorch: true });
+        }
+        this.effects.ring(aim.x, aim.z, 0xff7b2e, SNARE_RADIUS, 0.5);
+        this.sound.fireball();
+        break;
+      }
+      case 'flame_dash': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        const from = this.player.position.clone();
+        const dest = from.clone().addScaledVector(dir, 8);
+        this.resolveTeleport(dest);
+        this.effects.burst(from.x, 1.2, from.z, { color: 0xff7b2e, count: 12, speed: 4, life: 0.4, size: 1 });
+        this.player.position.copy(dest);
+        this.player.setTarget(dest);
+        this.player.faceInstant(dir.clone().add(dest));
+        // Burning trail: three scorched ticks along the dash line.
+        for (let k = 0; k < 3; k++) {
+          const t = (k + 1) / 4;
+          this.queueAoe(from.x + (dest.x - from.x) * t, from.z + (dest.z - from.z) * t, 2.2, dmg * 0.9, 0, 0.1 + k * 0.2, 0xff7b2e, { scorch: true });
+        }
+        this.effects.burst(dest.x, 1.2, dest.z, { color: 0xff7b2e, count: 12, speed: 4, life: 0.45, size: 1 });
+        this.showMarker(dest, 0xff7b2e);
+        this.sound.fireball();
+        break;
+      }
+      case 'chain_lightning': {
+        // Fork across up to 4 targets: nearest within 10m, then nearest
+        // within 8m of the last victim, damage fading 20% per jump.
+        const struck = new Set<Monster>();
+        const from = this.player.position.clone();
+        let mult = 1.5;
+        let targets = 0;
+        while (targets < 4) {
+          let best: Monster | null = null;
+          let bestD = targets === 0 ? 10 : 8;
+          for (const m of this.monsters) {
+            if (!m.alive || struck.has(m)) continue;
+            const d = from.distanceTo(m.position);
+            if (d < bestD) {
+              bestD = d;
+              best = m;
+            }
+          }
+          if (!best) break;
+          struck.add(best);
+          this.stormLance.fire(from, best.position);
+          const roll = rollPlayerDamage(dmg * mult, this.player.critChance);
+          this.damageMonster(best, roll.amount, { crit: roll.isCrit, color: 0xbfe2ff });
+          mult *= 0.8;
+          from.copy(best.position);
+          targets++;
+        }
+        if (targets === 0) {
+          this.showToast('No targets in range (10m).');
+          return;
+        }
+        this.player.castAnim = 1;
         this.sound.storm();
         break;
       }
@@ -2899,7 +3036,7 @@ export class Game {
       this.refreshSkillSlot3();
       this.hintUlt();
     }
-    if (this.extraUnlocked(0) || this.extraUnlocked(1) || this.extraUnlocked(2)) {
+    if (this.extraUnlocked(0) || this.extraUnlocked(1) || this.extraUnlocked(2) || this.extraUnlocked(3)) {
       this.refreshExtraSlots();
       this.hintExtras();
     }
@@ -3551,7 +3688,7 @@ export class Game {
     this.blinkTimer = Math.max(0, this.blinkTimer - dt);
     this.skillTimer = Math.max(0, this.skillTimer - dt);
     this.skill3Timer = Math.max(0, this.skill3Timer - dt);
-    for (let i = 0; i < 3; i++) this.extraTimers[i] = Math.max(0, this.extraTimers[i] - dt);
+    for (let i = 0; i < 4; i++) this.extraTimers[i] = Math.max(0, this.extraTimers[i] - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
     this.fountainTick(dt);
 
@@ -3690,6 +3827,29 @@ export class Game {
         this.hitAllInRadius(this.player.position, 4, this.whirlDmg * 1.0, 0, 0xff7b1f);
       }
       if (this.whirlTimer <= 0) this.whirlTick = 0;
+    }
+    // Blade Orbit: 3 blades circle the player, shredding on contact ticks.
+    if (this.orbitTimer > 0) {
+      this.orbitTimer -= dt;
+      this.orbitAngle += dt * 5.2;
+      const pp = this.player.position;
+      for (let k = 0; k < this.orbitBlades.length; k++) {
+        const b = this.orbitBlades[k];
+        const a = this.orbitAngle + (k * Math.PI * 2) / this.orbitBlades.length;
+        b.visible = this.orbitTimer > 0;
+        b.position.set(pp.x + Math.cos(a) * 2, 1.2, pp.z + Math.sin(a) * 2);
+        b.rotation.y = -a;
+      }
+      this.orbitTick -= dt;
+      if (this.orbitTick <= 0 && this.orbitTimer > 0) {
+        this.orbitTick += 0.4;
+        this.effects.ring(pp.x, pp.z, 0x7ce7ff, 2.4, 0.3);
+        this.hitAllInRadius(pp, 2.4, this.orbitDmg * 0.7, 0, 0x7ce7ff);
+      }
+      if (this.orbitTimer <= 0) {
+        this.orbitTick = 0;
+        for (const b of this.orbitBlades) b.visible = false;
+      }
     }
 
     // Monsters + incoming damage
@@ -3890,7 +4050,7 @@ export class Game {
     this.syncCooldown(this.elDodgeCd, this.elCdnDodge, this.player.dodgeCd, DODGE_CD);
     this.syncCooldown(this.elSkill2Cd, this.elCdnSkill2, this.skillTimer, this.skillCdMax);
     this.syncCooldown(this.elSkill3Cd, this.elCdnSkill3, this.skill3Timer, this.skill3CdMax);
-    for (let i = 0; i < 3; i++) this.syncCooldown(this.elExtraCd[i], this.elCdnExtra[i], this.extraTimers[i], this.extraCdMax[i]);
+    for (let i = 0; i < 4; i++) this.syncCooldown(this.elExtraCd[i], this.elCdnExtra[i], this.extraTimers[i], this.extraCdMax[i]);
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;

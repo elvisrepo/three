@@ -543,6 +543,25 @@ function createFieldMaterial(timeUniform: { value: number }): THREE.ShaderMateri
 
 export const SNARE_RADIUS = 4.5;
 
+export interface SnarePalette {
+  core: number;
+  inner: number;
+  outer: number;
+  halo: number;
+  field: number;
+  edge: number;
+}
+
+/** Authored violet (default) + ember orange for the Hunter burn trap. */
+export const SNARE_VIOLET: SnarePalette = {
+  core: 0xffffff, inner: 0xdbd1ff, outer: 0x8f6bff, halo: 0x29148c,
+  field: 0x8f6bff, edge: 0xffffff,
+};
+export const SNARE_EMBER: SnarePalette = {
+  core: 0xfff8ee, inner: 0xffd9b0, outer: 0xff7b2e, halo: 0x591a00,
+  field: 0xff7b2e, edge: 0xffe9c9,
+};
+
 /** Voltaic Snare: leash throw, snap open, hold burning, collapse. */
 export class SnareTrap {
   private cage: THREE.Mesh[] = [];
@@ -578,11 +597,13 @@ export class SnareTrap {
   }
 
   /** Whip a trap from the caster's hand to (x, z). Burns on landing. */
-  cast(origin: THREE.Vector3, x: number, z: number): void {
+  cast(origin: THREE.Vector3, x: number, z: number, palette?: SnarePalette): void {
     this.hand.set(origin.x, 1.2, origin.z);
     this.centre.set(x, 0, z);
     this.seed = Math.random() * 100;
     this.field.position.set(x, 0.06, z);
+    // Shared materials keep the last palette — always set, defaulting violet.
+    const pal = palette ?? SNARE_VIOLET;
     for (const mat of this.cageMats) {
       mat.uniforms.uHand.value.copy(this.hand);
       mat.uniforms.uCentre.value.copy(this.centre);
@@ -594,10 +615,16 @@ export class SnareTrap {
       mat.uniforms.uCountColumn.value = 0;
       mat.uniforms.uCountTendril.value = 0;
       mat.uniforms.uCountRim.value = 0;
+      (mat.uniforms.uColorCore.value as THREE.Color).setHex(pal.core);
+      (mat.uniforms.uColorInner.value as THREE.Color).setHex(pal.inner);
+      (mat.uniforms.uColorOuter.value as THREE.Color).setHex(pal.outer);
+      (mat.uniforms.uColorHalo.value as THREE.Color).setHex(pal.halo);
     }
     this.fieldMat.uniforms.uSeed.value = this.seed;
     this.fieldMat.uniforms.uRadius.value = 0;
     this.fieldMat.uniforms.uFade.value = 0;
+    (this.fieldMat.uniforms.uColorField.value as THREE.Color).setHex(pal.field);
+    (this.fieldMat.uniforms.uColorEdge.value as THREE.Color).setHex(pal.edge);
     for (const mesh of this.cage) mesh.visible = true;
     this.field.visible = true;
     this.active = true;
