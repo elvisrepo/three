@@ -12,6 +12,12 @@ export interface JobSkillDef {
   desc: string;
 }
 
+/** A 4th-bar-plus skill: unlocked at `level`, bound to successive keys from 4. */
+export interface JobExtraSkill {
+  skill: JobSkillDef;
+  level: number;
+}
+
 export interface JobDef {
   id: string;
   name: string;
@@ -21,15 +27,13 @@ export interface JobDef {
   bonus: { maxHp: number; damage: number; crit: number };
   skill: JobSkillDef;
   ultimate: JobSkillDef;
-  /** 4th skill (key 4) — currently Cryomancer-only, unlocks at EXTRA_LEVEL. */
-  extra?: JobSkillDef;
+  /** Extra bar skills (keys 4+) — currently Cryomancer-only. */
+  extras?: JobExtraSkill[];
 }
 
 export const ADVANCE_LEVEL = 10;
 /** Second advancement: job ultimate auto-unlocks at this level (no new choice). */
 export const ULT_LEVEL = 20;
-/** 4th-skill unlock level (no new choice — it appears on the bar). */
-export const EXTRA_LEVEL = 15;
 
 export const JOBS: JobDef[] = [
   {
@@ -91,7 +95,11 @@ export const JOBS: JobDef[] = [
     bonus: { maxHp: 25, damage: 5, crit: 0 },
     skill: { id: 'frost_nova', name: 'Frost Nova', icon: '❄️', cooldown: 7, cost: 14, desc: '1.6x + 50% slow, 4.5m.' },
     ultimate: { id: 'glacial_prison', name: 'Glacial Prison', icon: '🧊', cooldown: 25, cost: 30, desc: '2.5x + 5s slow in 7m.' },
-    extra: { id: 'frost_lance', name: 'Frost Lance', icon: '💠', cooldown: 9, cost: 22, desc: 'Ice lance: 3x 1.1x blasts + slow in a line.' },
+    extras: [
+      { skill: { id: 'frost_lance', name: 'Frost Lance', icon: '💠', cooldown: 9, cost: 22, desc: 'Ice lance: 3x 1.1x blasts + slow in a line.' }, level: 15 },
+      { skill: { id: 'storm_lance', name: 'Storm Lance', icon: '🌩️', cooldown: 12, cost: 28, desc: 'Lightning bundle: 4x 1.2x down a line.' }, level: 25 },
+      { skill: { id: 'nova_beam', name: 'Nova Beam', icon: '🔆', cooldown: 20, cost: 35, desc: 'Burning column: 5x 1.0x ticks + 2x impact.' }, level: 30 },
+    ],
   },
 ];
 

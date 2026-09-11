@@ -30,8 +30,10 @@ import {
   type GearBonus,
 } from '../items/Items';
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
-import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL, EXTRA_LEVEL } from '../data/Jobs';
+import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL, type JobExtraSkill } from '../data/Jobs';
 import { FrostLance, FROST_LANCE_LENGTH } from '../entities/FrostLance';
+import { StormLance, STORM_LANCE_LENGTH } from '../entities/StormLance';
+import { NovaBeam, NOVA_BEAM_LENGTH } from '../entities/NovaBeam';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
@@ -163,6 +165,8 @@ export class Game {
   /** quarks pilot: meteor fall + impact systems (fire AoE only). */
   private meteorFx!: MeteorFx;
   private frostLance!: FrostLance;
+  private stormLance!: StormLance;
+  private novaBeam!: NovaBeam;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -229,10 +233,11 @@ export class Game {
   private skillCdMax = 1;
   private skill3Timer = 0;
   private skill3CdMax = 1;
-  private skill4Timer = 0;
-  private skill4CdMax = 1;
+  /** Extra bar slots 4/5/6 (job extras) — parallel timers. */
+  private extraTimers = [0, 0, 0];
+  private extraCdMax = [1, 1, 1];
   private ultHintShown = false;
-  private extraHintShown = false;
+  private extraHintShown = [false, false, false];
   private whirlTimer = 0;
   /** Whirlwind: time to next damage spin + damage per spin (stored at cast). */
   private whirlTick = 0;
@@ -328,9 +333,9 @@ export class Game {
   private elSkill2Cd: HTMLElement | null = null;
   private elSkill3: HTMLElement | null = null;
   private elSkill3Cd: HTMLElement | null = null;
-  private elSkill4: HTMLElement | null = null;
-  private elSkill4Cd: HTMLElement | null = null;
-  private elCdnExtra: HTMLElement | null = null;
+  private elExtra: (HTMLElement | null)[] = [null, null, null];
+  private elExtraCd: (HTMLElement | null)[] = [null, null, null];
+  private elCdnExtra: (HTMLElement | null)[] = [null, null, null];
   private elCdnSkill3: HTMLElement | null = null;
   private elCdnFire: HTMLElement | null = null;
   private elCdnBlink: HTMLElement | null = null;
@@ -418,6 +423,8 @@ export class Game {
     for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
     this.meteorFx = new MeteorFx(this.scene);
     this.frostLance = new FrostLance(this.scene);
+    this.stormLance = new StormLance(this.scene);
+    this.novaBeam = new NovaBeam(this.scene);
     this.loot = new LootManager(this.scene);
     this.stash.fromJSON(loadSharedStash(), 0);
   }
@@ -812,10 +819,12 @@ export class Game {
     this.elSkill2Cd = $('cd-skill2');
     this.elSkill3 = $('skill-ult');
     this.elSkill3Cd = $('cd-skill3');
-    this.elSkill4 = $('skill-extra');
-    this.elSkill4Cd = $('cd-extra');
+    for (let i = 0; i < 3; i++) {
+      this.elExtra[i] = $(`skill-extra${i}`);
+      this.elExtraCd[i] = $(`cd-extra${i}`);
+    }
     this.elCdnSkill3 = $('cdn-skill3');
-    this.elCdnExtra = $('cdn-extra');
+    for (let i = 0; i < 3; i++) this.elCdnExtra[i] = $(`cdn-extra${i}`);
     this.elCdnFire = $('cdn-fire');
     this.elCdnBlink = $('cdn-blink');
     this.elCdnDodge = $('cdn-dodge');
@@ -1131,7 +1140,7 @@ export class Game {
     this.currentSaveId = makeCharId();
     this.sanctumHintShown = false;
     this.ultHintShown = false;
-    this.extraHintShown = false;
+    this.extraHintShown = [false, false, false];
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone('city');
@@ -1146,7 +1155,7 @@ export class Game {
     this.currentSaveId = s.id;
     this.sanctumHintShown = false;
     this.ultHintShown = false;
-    this.extraHintShown = false;
+    this.extraHintShown = [false, false, false];
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone(s.zoneId, { pos: [s.pos[0], s.pos[1]] });
@@ -1277,6 +1286,8 @@ export class Game {
     this.pendingAoe = [];
     this.meteorFx.stopAll();
     this.frostLance.clear();
+    this.stormLance.clear();
+    this.novaBeam.clear();
     this.monsters = [];
     this.bossCtrls = [];
     this.elites.clear();
@@ -1337,7 +1348,7 @@ export class Game {
       this.autosave();
       this.hintSanctum();
       this.hintUlt();
-      this.hintExtra();
+      this.hintExtras();
     }
     if (def.id === 'city') {
       this.maybeSpawnCityAxe();
@@ -1346,7 +1357,7 @@ export class Game {
     this.refreshSkillSlot1();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
-    this.refreshSkillSlot4();
+    this.refreshExtraSlots();
   }
 
   private spawnZoneMonsters(def: ZoneDef): void {
@@ -1679,7 +1690,9 @@ export class Game {
       }
       else if (e.code === b.job) this.castJobSkill();
       else if (e.code === b.ult) this.castUlt();
-      else if (e.code === b.extra) this.castExtra();
+      else if (e.code === b.skill4) this.castExtra(0);
+      else if (e.code === b.skill5) this.castExtra(1);
+      else if (e.code === b.skill6) this.castExtra(2);
       else if (e.code === b.potion) this.tryPotion();
       else if (e.code === b.bag) this.toggleInventory();
       else if (e.code === b.char) this.toggleChar();
@@ -2156,7 +2169,7 @@ export class Game {
     this.closeJobModal();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
-    this.refreshSkillSlot4();
+    this.refreshExtraSlots();
     this.renderChar();
     this.sound.jobAdvance();
     this.numbers.spawn(this.player.position, `${def.name.toUpperCase()}!`, { color: '#ffd21f', crit: true, scale: 1.8 });
@@ -2200,34 +2213,48 @@ export class Game {
     return this.player.job !== null && this.player.level >= ULT_LEVEL;
   }
 
-  /** 4th-skill slot: only jobs with `extra` (Cryomancer today), from Lv15. */
-  private extraUnlocked(): boolean {
+  /** 4th-bar-plus slots: job extras, each with its own unlock level. */
+  private extraAt(i: number): JobExtraSkill | null {
     const job = jobById(this.player.job);
-    return !!job?.extra && this.player.level >= EXTRA_LEVEL;
+    return job?.extras?.[i] ?? null;
   }
 
-  private refreshSkillSlot4(): void {
-    if (!this.elSkill4) return;
-    const job = jobById(this.player.job);
-    if (job?.extra && this.player.level >= EXTRA_LEVEL) {
-      this.elSkill4.classList.remove('locked');
-      this.elSkill4.innerHTML = `${job.extra.icon}<span class="key">4</span><span class="cd-num" id="cdn-extra"></span><div id="cd-extra" class="cd"></div>`;
-      this.elSkill4.title = `${job.extra.name} (4) — ${job.extra.desc} · ${job.extra.cost} MP`;
+  private extraUnlocked(i: number): boolean {
+    const ex = this.extraAt(i);
+    return !!ex && this.player.level >= ex.level;
+  }
+
+  private refreshExtraSlot(i: number): void {
+    const el = this.elExtra[i];
+    if (!el) return;
+    const key = `${i + 4}`;
+    const ex = this.extraAt(i);
+    if (ex && this.player.level >= ex.level) {
+      el.classList.remove('locked');
+      el.innerHTML = `${ex.skill.icon}<span class="key">${key}</span><span class="cd-num" id="cdn-extra${i}"></span><div id="cd-extra${i}" class="cd"></div>`;
+      el.title = `${ex.skill.name} (${key}) — ${ex.skill.desc} · ${ex.skill.cost} MP`;
     } else {
-      this.elSkill4.classList.add('locked');
-      this.elSkill4.innerHTML = `4<span class="cd-num" id="cdn-extra"></span><div id="cd-extra" class="cd"></div>`;
-      this.elSkill4.title = job?.extra ? `Extra skill unlocks at Lv${EXTRA_LEVEL}` : 'No extra skill for this job';
+      el.classList.add('locked');
+      el.innerHTML = `${key}<span class="cd-num" id="cdn-extra${i}"></span><div id="cd-extra${i}" class="cd"></div>`;
+      el.title = ex ? `Extra skill unlocks at Lv${ex.level}` : 'No extra skill for this job';
     }
-    this.elSkill4Cd = document.getElementById('cd-extra');
-    this.elCdnExtra = document.getElementById('cdn-extra');
+    this.elExtraCd[i] = document.getElementById(`cd-extra${i}`);
+    this.elCdnExtra[i] = document.getElementById(`cdn-extra${i}`);
   }
 
-  /** One-time extra-skill unlock toast (slot refreshes every zone load). */
-  private hintExtra(): void {
-    if (!this.started || !this.extraUnlocked() || this.extraHintShown) return;
-    this.extraHintShown = true;
-    const job = jobById(this.player.job);
-    if (job?.extra) this.showToast(`💠 EXTRA unlocked: ${job.extra.icon} ${job.extra.name} — press 4!`, 3.5);
+  private refreshExtraSlots(): void {
+    for (let i = 0; i < 3; i++) this.refreshExtraSlot(i);
+  }
+
+  /** One-time extra-skill unlock toasts (slots refresh every zone load). */
+  private hintExtras(): void {
+    if (!this.started) return;
+    for (let i = 0; i < 3; i++) {
+      if (!this.extraUnlocked(i) || this.extraHintShown[i]) continue;
+      this.extraHintShown[i] = true;
+      const ex = this.extraAt(i);
+      if (ex) this.showToast(`${ex.skill.icon} EXTRA unlocked: ${ex.skill.name} — press ${i + 4}!`, 3.5);
+    }
   }
 
   private refreshSkillSlot3(): void {
@@ -2435,15 +2462,15 @@ export class Game {
     this.skill3CdMax = cd;
   }
 
-  /** 4th skill on key 4. Cryomancer-only today (Frost Lance), unlocked at Lv15. */
-  private castExtra(): void {
-    if (!this.started || !this.player.alive || this.skill4Timer > 0) return;
-    const job = jobById(this.player.job);
-    const extra = job?.extra;
-    if (!extra || this.player.level < EXTRA_LEVEL) {
-      this.showToast(extra ? `Extra skill unlocks at Lv${EXTRA_LEVEL}.` : 'No extra skill for this job.');
+  /** Extra bar skills on keys 4/5/6. Cryomancer-only today, each with its own unlock level. */
+  private castExtra(i: number): void {
+    if (!this.started || !this.player.alive || this.extraTimers[i] > 0) return;
+    const ex = this.extraAt(i);
+    if (!ex || this.player.level < ex.level) {
+      this.showToast(ex ? `Extra skill unlocks at Lv${ex.level}.` : 'No extra skill for this job.');
       return;
     }
+    const extra = ex.skill;
     if (this.player.mana < extra.cost) {
       this.showToast('Not enough mana.');
       return;
@@ -2457,21 +2484,62 @@ export class Game {
         this.player.castAnim = 1;
         this.frostLance.cast(this.player.position, dir);
         // Damage rides three staggered circles down the lance line.
-        for (let i = 0; i < 3; i++) {
-          const cx = this.player.position.x + dir.x * (4 + i * 4);
-          const cz = this.player.position.z + dir.z * (4 + i * 4);
-          this.queueAoe(cx, cz, 2.6, dmg * 1.1, 1.5, 0.15 + i * 0.15, 0x9adcff);
+        for (let k = 0; k < 3; k++) {
+          const cx = this.player.position.x + dir.x * (4 + k * 4);
+          const cz = this.player.position.z + dir.z * (4 + k * 4);
+          this.queueAoe(cx, cz, 2.6, dmg * 1.1, 1.5, 0.15 + k * 0.15, 0x9adcff);
         }
         this.effects.ring(this.player.position.x, this.player.position.z, 0x9adcff, FROST_LANCE_LENGTH, 0.4);
         this.sound.frost();
+        break;
+      }
+      case 'storm_lance': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        this.player.faceInstant(dir.clone().add(this.player.position));
+        this.player.castAnim = 1;
+        this.stormLance.cast(this.player.position, dir);
+        // Damage lands with the strike front: four circles down the line.
+        for (let k = 0; k < 4; k++) {
+          const cx = this.player.position.x + dir.x * (3 + k * 3);
+          const cz = this.player.position.z + dir.z * (3 + k * 3);
+          this.queueAoe(cx, cz, 2.4, dmg * 1.2, 0, 0.35 + k * 0.05, 0x5db4ff, { scorch: true });
+        }
+        const ex0 = this.player.position.x + dir.x * STORM_LANCE_LENGTH;
+        const ez0 = this.player.position.z + dir.z * STORM_LANCE_LENGTH;
+        this.effects.burst(ex0, 1.0, ez0, { color: 0xbfe2ff, count: 22, speed: 7, life: 0.5, size: 1.1 });
+        this.effects.ring(ex0, ez0, 0x5db4ff, 3.5, 0.5);
+        this.effects.scorch(ex0, ez0, 3);
+        this.camShake = Math.min(0.9, this.camShake + 0.35);
+        this.sound.storm();
+        break;
+      }
+      case 'nova_beam': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        this.player.faceInstant(dir.clone().add(this.player.position));
+        this.player.castAnim = 1;
+        this.novaBeam.cast(this.player.position, dir);
+        // Burn ticks ride the hold: five delayed circles + a heavy impact.
+        for (let k = 0; k < 5; k++) {
+          const cx = this.player.position.x + dir.x * (2.5 + k * 2.4);
+          const cz = this.player.position.z + dir.z * (2.5 + k * 2.4);
+          this.queueAoe(cx, cz, 2.2, dmg * 1.0, 0, 0.7 + k * 0.3, 0x7ce7ff, { flash: '#bff3ff' });
+        }
+        const bx = this.player.position.x + dir.x * NOVA_BEAM_LENGTH;
+        const bz = this.player.position.z + dir.z * NOVA_BEAM_LENGTH;
+        this.queueAoe(bx, bz, 3, dmg * 2.0, 0, 2.0, 0xffd479, { flash: '#fff2b0', scorch: true });
+        this.chargeCast(dir, 0x7ce7ff, 0.7);
+        this.camShake = Math.min(0.9, this.camShake + 0.3);
+        this.sound.beam();
         break;
       }
       default:
         return;
     }
     this.player.spendMana(extra.cost);
-    this.skill4Timer = extra.cooldown;
-    this.skill4CdMax = extra.cooldown;
+    this.extraTimers[i] = extra.cooldown;
+    this.extraCdMax[i] = extra.cooldown;
   }
 
   /** Shared kill tail: loot/XP/quest payout + target + boss bar. */
@@ -2769,9 +2837,9 @@ export class Game {
       this.refreshSkillSlot3();
       this.hintUlt();
     }
-    if (this.extraUnlocked()) {
-      this.refreshSkillSlot4();
-      this.hintExtra();
+    if (this.extraUnlocked(0) || this.extraUnlocked(1) || this.extraUnlocked(2)) {
+      this.refreshExtraSlots();
+      this.hintExtras();
     }
     this.checkLevelQuests();
   }
@@ -3421,7 +3489,7 @@ export class Game {
     this.blinkTimer = Math.max(0, this.blinkTimer - dt);
     this.skillTimer = Math.max(0, this.skillTimer - dt);
     this.skill3Timer = Math.max(0, this.skill3Timer - dt);
-    this.skill4Timer = Math.max(0, this.skill4Timer - dt);
+    for (let i = 0; i < 3; i++) this.extraTimers[i] = Math.max(0, this.extraTimers[i] - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
     this.fountainTick(dt);
 
@@ -3677,6 +3745,8 @@ export class Game {
     this.effects.update(dt);
     this.meteorFx.update(dt);
     this.frostLance.update(dt);
+    this.stormLance.update(dt);
+    this.novaBeam.update(dt);
     for (const c of this.chargeUps) c.update(dt);
     for (const m of this.muzzles) m.update(dt);
     this.portalAura.update(dt);
@@ -3755,7 +3825,7 @@ export class Game {
     this.syncCooldown(this.elDodgeCd, this.elCdnDodge, this.player.dodgeCd, DODGE_CD);
     this.syncCooldown(this.elSkill2Cd, this.elCdnSkill2, this.skillTimer, this.skillCdMax);
     this.syncCooldown(this.elSkill3Cd, this.elCdnSkill3, this.skill3Timer, this.skill3CdMax);
-    this.syncCooldown(this.elSkill4Cd, this.elCdnExtra, this.skill4Timer, this.skill4CdMax);
+    for (let i = 0; i < 3; i++) this.syncCooldown(this.elExtraCd[i], this.elCdnExtra[i], this.extraTimers[i], this.extraCdMax[i]);
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;

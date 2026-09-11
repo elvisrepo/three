@@ -259,6 +259,22 @@ export class SoundManager {
     this.noise(0.3, 0.1, 'highpass', 3000, 6000);
   }
 
+  /** Storm Lance discharge: sharp crack over a low thunder roll. */
+  storm(): void {
+    if (!this.gate('storm', 250)) return;
+    this.noise(0.12, 0.4, 'highpass', 1800, 5200);
+    this.tone('sawtooth', 160, 45, 0.7, 0.35, 0.03);
+    this.noise(0.6, 0.22, 'lowpass', 300, 90, 1, 0.05);
+  }
+
+  /** Nova Beam discharge: rising charge whine into a held burn. */
+  beam(): void {
+    if (!this.gate('beam', 300)) return;
+    this.tone('sawtooth', 220, 880, 0.7, 0.12);
+    this.tone('sine', 110, 440, 0.9, 0.2, 0.05);
+    this.noise(0.8, 0.08, 'bandpass', 1200, 2400, 2, 0.4);
+  }
+
   fireball(): void {
     if (!this.gate('fire', 120)) return;
     this.tone('sawtooth', 280, 950, 0.25, 0.22);
