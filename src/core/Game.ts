@@ -10,6 +10,7 @@ import { ChargeUp, MuzzleFlash } from '../entities/ChargeCast';
 import { MeteorFx } from '../entities/MeteorQuarks';
 import type { ParticleSystem as QuarksSystem } from 'three.quarks';
 import { ProjectilePool } from '../entities/ProjectilePool';
+import { EnemyShots } from '../entities/EnemyShots';
 import { rollPlayerDamage, xpNeed } from '../combat/Stats';
 import { createTerrain } from '../world/Terrain';
 import { ZONES, zoneById, type ZoneDef } from '../world/Zones';
@@ -37,6 +38,7 @@ import { compareHtml } from '../ui/compare';
 import { QUESTS, isComplete, blankProgress, rewardText, type QuestDef, type QuestProgress } from '../data/Quests';
 import { ELITE_XP_MULT, ELITE_SCALE, rollElite, type EliteRoll } from '../data/Elites';
 import { RIFT_TIERS, isRiftKey, keyTier, keyTierForLevel, makeRiftKey, riftTier, type RiftTier } from '../data/Rifts';
+import { rollCreature } from '../data/Creatures';
 import { questLogHtml, questTrackerHtml, type QuestEntry } from '../ui/quests';
 import { gearStatsText, equipRowHtml, invGridHtml } from '../ui/inventory';
 import { shopStockHtml } from '../ui/shop';
@@ -151,6 +153,7 @@ export class Game {
   private numbers!: DamageNumbers;
   private effects!: Effects;
   private projectiles!: ProjectilePool;
+  private enemyShots!: EnemyShots;
   /** Charged-blast cast kit: windup charges (round-robin ×2) + muzzle pops (×4). */
   private chargeUps: ChargeUp[] = [];
   private chargeCursor = 0;
@@ -401,6 +404,7 @@ export class Game {
     this.numbers = new DamageNumbers(this.scene);
     this.effects = new Effects(this.scene);
     this.projectiles = new ProjectilePool(this.scene, 24);
+    this.enemyShots = new EnemyShots(this.scene, 12);
     for (let i = 0; i < 2; i++) this.chargeUps.push(new ChargeUp(this.scene));
     for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
     this.meteorFx = new MeteorFx(this.scene);
@@ -1256,6 +1260,7 @@ export class Game {
     this.monsters = [];
     this.bossCtrls = [];
     this.elites.clear();
+    this.enemyShots.clear();
     if (def.id !== 'rift') this.riftRun = null;
     this.loot.clear();
     this.pickupUid = null;
@@ -1345,14 +1350,20 @@ export class Game {
       }
       const level = randi(def.monsters.levelMin, def.monsters.levelMax);
       const elite = rollElite(level);
+      const kind = rollCreature(def.roster);
       const m = new Monster(new THREE.Vector3(x, 0, z), level, {
-        tint: def.monsterTint,
+        tint: kind.tint ?? def.monsterTint,
         species: def.monsterSpecies,
-        hpMult: elite?.hpMult,
-        dmgMult: elite?.dmgMult,
-        xpMult: elite ? ELITE_XP_MULT : 1,
+        hpMult: (elite?.hpMult ?? 1) * kind.hpMult,
+        dmgMult: (elite?.dmgMult ?? 1) * kind.dmgMult,
+        xpMult: (elite ? ELITE_XP_MULT : 1) * kind.xpMult,
+        creature: kind.id,
+        speedMult: kind.speedMult,
+        ranged: kind.ranged,
         name: elite ? `Elite ${elite.titles.join(' ')}` : undefined,
       });
+      // Archetype size is group-scale (ctor scale only grows the goblin rig).
+      if (kind.scale !== 1) m.group.scale.multiplyScalar(kind.scale);
       if (elite) {
         this.applyElite(m, elite);
         eliteCount++;
@@ -1410,14 +1421,19 @@ export class Game {
       }
       const level = randi(tier.monsterMin, tier.monsterMax);
       const elite = Math.random() < tier.eliteChance ? rollElite(level, true) : null;
+      const kind = rollCreature(def.roster);
       const m = new Monster(new THREE.Vector3(x, 0, z), level, {
-        tint: def.monsterTint,
+        tint: kind.tint ?? def.monsterTint,
         species: def.monsterSpecies,
-        hpMult: (elite?.hpMult ?? 1) * tier.hpMult,
-        dmgMult: (elite?.dmgMult ?? 1) * tier.dmgMult,
-        xpMult: elite ? ELITE_XP_MULT : 1,
+        hpMult: (elite?.hpMult ?? 1) * tier.hpMult * kind.hpMult,
+        dmgMult: (elite?.dmgMult ?? 1) * tier.dmgMult * kind.dmgMult,
+        xpMult: (elite ? ELITE_XP_MULT : 1) * kind.xpMult,
+        creature: kind.id,
+        speedMult: kind.speedMult,
+        ranged: kind.ranged,
         name: elite ? `Elite ${elite.titles.join(' ')}` : undefined,
       });
+      if (kind.scale !== 1) m.group.scale.multiplyScalar(kind.scale);
       if (elite) this.applyElite(m, elite);
       m.group.userData.monster = m;
       this.monsters.push(m);
@@ -3423,7 +3439,15 @@ export class Game {
     for (const m of this.monsters) {
       const dmg = m.update(dt, this.player.position, this.player.alive, this.statics, this.monsters);
       if (dmg > 0 && this.player.alive) this.damagePlayer(dmg);
+      if (m.shotReady) {
+        m.shotReady = false;
+        this.enemyShots.fire(m.position, this.player.position, Math.max(1, Math.round(m.damage * m.rangedDmgMult)), m.rangedColor);
+        this.sound.spit();
+      }
     }
+    this.enemyShots.update(dt, this.player.position, (dmg) => {
+      if (this.player.alive) this.damagePlayer(dmg);
+    });
 
     // Boss extras: telegraphed slams + summons
     for (const b of this.bossCtrls) {
@@ -3724,13 +3748,14 @@ export class Game {
       ctx.arc(mx, mz, Math.max(1.5, pulse - 2.5), 0, Math.PI * 2);
       ctx.fill();
     }
-    // Trash monsters (elites get a gold dot)
+    // Trash monsters (elites gold, spitters orange, rest purple)
     for (const m of this.monsters) {
       if (!m.alive || m.isBoss) continue;
       const [mx, mz] = toMap(m.position.x, m.position.z);
-      ctx.fillStyle = this.elites.has(m) ? '#ffd21f' : '#c07bff';
+      const isElite = this.elites.has(m);
+      ctx.fillStyle = isElite ? '#ffd21f' : m.creature === 'spitter' ? '#ff9a2e' : '#c07bff';
       ctx.beginPath();
-      ctx.arc(mx, mz, this.elites.has(m) ? 3 : 2, 0, Math.PI * 2);
+      ctx.arc(mx, mz, isElite ? 3 : 2, 0, Math.PI * 2);
       ctx.fill();
     }
     // Boss: pulsing red marker + crown (drawn last, on top)

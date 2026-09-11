@@ -245,6 +245,12 @@ export class SoundManager {
     if (crit) this.tone('square', 880, 1320, 0.09, 0.12, 0.03);
   }
 
+  /** Spitter trash bolt (soft hiss — gated, packs spit in volleys). */
+  spit(): void {
+    if (!this.gate('spit', 140)) return;
+    this.noise(0.09, 0.16, 'bandpass', 900, 320, 1.4);
+  }
+
   fireball(): void {
     if (!this.gate('fire', 120)) return;
     this.tone('sawtooth', 280, 950, 0.25, 0.22);

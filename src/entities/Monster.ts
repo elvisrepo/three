@@ -62,6 +62,16 @@ export class Monster {
   flash = 0;
   /** Frost slow timer — halves move speed while > 0. */
   slowTimer = 0;
+  /** Archetype id (data/Creatures) — minimap + tuning hooks. */
+  creature = 'chaser';
+  /** Ranged kit (spitters): plant at range and spit; still bites up close. */
+  rangedRange = 0;
+  rangedCd = 2.6;
+  rangedDmgMult = 0.8;
+  rangedColor = 0xc07bff;
+  /** Set when a spit is ready — Game fires it from the enemy pool. */
+  shotReady = false;
+  private shotT = 0;
 
   private body: THREE.Mesh;
   private bodyMat: THREE.MeshStandardMaterial;
@@ -107,25 +117,35 @@ export class Monster {
       species?: MonsterSpecies;
       /** Mixamo model dir under public/ (bosses). Absent = capsule/goblin. */
       model?: string;
+      /** Trash archetype id + combat tuning (data/Creatures). */
+      creature?: string;
+      speedMult?: number;
+      ranged?: { range: number; cooldown: number; dmgMult: number; color: number };
     },
   ) {
     this.level = level;
     this.isBoss = opts?.isBoss ?? false;
     this.displayName = opts?.name ?? '';
+    this.creature = opts?.creature ?? 'chaser';
     const sizeScale = (1 + (level - 1) * 0.06) * (opts?.scale ?? 1);
     this.maxHp = this.hp = Math.round((34 + level * 9) * sizeScale * (opts?.hpMult ?? 1));
     this.damage = Math.round((5 + level * 1.6) * (opts?.dmgMult ?? 1));
     this.xpValue = Math.round((9 + level * 3) * (opts?.xpMult ?? 1));
-    this.speed = randRange(3.0, 3.8) * (this.isBoss ? 0.85 : 1);
+    this.speed = randRange(3.0, 3.8) * (this.isBoss ? 0.85 : 1) * (opts?.speedMult ?? 1);
     this.aggroRadius = opts?.aggro ?? 11;
+    if (opts?.ranged) {
+      this.rangedRange = opts.ranged.range;
+      this.rangedCd = opts.ranged.cooldown;
+      this.rangedDmgMult = opts.ranged.dmgMult;
+      this.rangedColor = opts.ranged.color;
+    }
     if (opts?.respawnDelay !== undefined) this.respawnDelay = opts.respawnDelay;
     if (this.isBoss) this.group.scale.setScalar(opts?.scale ?? 1.6);
 
     this.bodyMat = new THREE.MeshStandardMaterial({ color: opts?.tint ?? 0x9b5de5, roughness: 0.65 });
 
-    this.bodyMat = new THREE.MeshStandardMaterial({ color: 0x9b5de5, roughness: 0.65 });
     if (opts?.species === 'goblin' && !this.isBoss) {
-      this.goblin = buildGoblin();
+      this.goblin = buildGoblin(opts?.tint);
       // Slight visual growth with level (gameplay radius unchanged).
       this.goblin.root.scale.setScalar(sizeScale);
       this.group.add(this.goblin.root);
@@ -365,6 +385,8 @@ export class Monster {
     this.attackTimer = 0;
     this.strikeTimer = -1;
     this.strikeDamage = 0;
+    this.shotT = 0;
+    this.shotReady = false;
     this.deathPlayed = false;
     this.lastAttackAnim = 0;
     if (this.mixer && this.mIdle) {
@@ -471,7 +493,18 @@ export class Monster {
       // Plant feet while a skinned one-shot plays (punch/slam/roar/hit):
       // gliding through an attack pose is what read as "floating".
       // Capsule/goblin mobs have no one-shots, so this is boss-only in practice.
-      if (distPlayer > this.attackRange && !this.bossOneShotPlaying()) {
+      if (this.rangedRange > 0 && distPlayer <= this.rangedRange && distPlayer > this.attackRange) {
+        // Spitter: hold range and spit (melee bite still applies up close).
+        this.face(playerPos, dt);
+        if (playerAlive) {
+          this.shotT -= dt;
+          if (this.shotT <= 0) {
+            this.shotT = this.rangedCd;
+            this.attackAnim = 1;
+            this.shotReady = true;
+          }
+        }
+      } else if (distPlayer > this.attackRange && !this.bossOneShotPlaying()) {
         this.moveToward(playerPos, dt, statics, others, 1);
       } else {
         this.face(playerPos, dt);

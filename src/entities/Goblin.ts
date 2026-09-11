@@ -34,9 +34,11 @@ function part(geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: numb
   return m;
 }
 
-export function buildGoblin(): GoblinRig {
-  const skin = std(0x55b356);
-  const skinDark = std(0x3d8a41);
+export function buildGoblin(tint?: number): GoblinRig {
+  const skin = std(tint ?? 0x55b356);
+  const skinDark = tint !== undefined
+    ? std(new THREE.Color(tint).multiplyScalar(0.62).getHex())
+    : std(0x3d8a41);
   const cloth = std(0x7a5230);
   const wood = std(0x6b4423);
   const woodDark = std(0x4e3220);

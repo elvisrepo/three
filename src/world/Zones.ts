@@ -1,6 +1,7 @@
 /** Phase 2 — data-driven zones. Add Zone 3+ here without touching game logic. */
 
 import type { MonsterSpecies } from '../entities/Monster';
+import type { RosterEntry } from '../data/Creatures';
 
 export interface MonsterPack {
   count: number;
@@ -43,6 +44,8 @@ export interface ZoneDef {
   monsters: MonsterPack | null;
   boss: BossDef | null;
   hazards?: ZoneHazard[];
+  /** Trash mix (weighted archetype ids from data/Creatures). Absent = all chasers. */
+  roster?: RosterEntry[];
   hasShop: boolean;
   hasPortal: boolean;
   /** Where the player appears on entering. */
@@ -93,6 +96,11 @@ export const ZONES: ZoneDef[] = [
     monsters: { count: 8, levelMin: 1, levelMax: 4 },
     boss: { name: 'Pumpkin Hulk', level: 8 },
     bossModel: 'models/boss/meadow',
+    roster: [
+      { creature: 'chaser', weight: 5 },
+      { creature: 'skitterer', weight: 2 },
+      { creature: 'brute', weight: 1 },
+    ],
     hasShop: false,
     hasPortal: false,
     spawn: [0, 18],
@@ -114,6 +122,11 @@ export const ZONES: ZoneDef[] = [
     monsterTint: 0x4fd18b,
     monsters: { count: 10, levelMin: 10, levelMax: 13 },
     boss: { name: 'Crypt Lord', level: 15 },
+    roster: [
+      { creature: 'chaser', weight: 4 },
+      { creature: 'spitter', weight: 2 },
+      { creature: 'brute', weight: 2 },
+    ],
     hasShop: false,
     hasPortal: false,
     spawn: [0, 18],
@@ -135,6 +148,11 @@ export const ZONES: ZoneDef[] = [
     monsterTint: 0xe25822,
     monsters: { count: 12, levelMin: 20, levelMax: 24 },
     boss: { name: 'Cinder Tyrant', level: 25 },
+    roster: [
+      { creature: 'chaser', weight: 3 },
+      { creature: 'brute', weight: 3 },
+      { creature: 'spitter', weight: 2 },
+    ],
     hasShop: false,
     hasPortal: false,
     spawn: [0, 18],
@@ -158,6 +176,12 @@ export const ZONES: ZoneDef[] = [
     monsters: { count: 14, levelMin: 30, levelMax: 34 },
     boss: { name: 'The Hornfather', level: 35 },
     bossModel: 'models/boss/wilds',
+    roster: [
+      { creature: 'chaser', weight: 4 },
+      { creature: 'skitterer', weight: 2 },
+      { creature: 'spitter', weight: 2 },
+      { creature: 'brute', weight: 2 },
+    ],
     hasShop: false,
     hasPortal: false,
     spawn: [0, 18],
@@ -191,6 +215,12 @@ export const ZONES: ZoneDef[] = [
     monsterSpecies: 'goblin',
     monsters: { count: 12, levelMin: 35, levelMax: 37 },
     boss: { name: 'Rift Echo', level: 38 },
+    roster: [
+      { creature: 'chaser', weight: 3 },
+      { creature: 'brute', weight: 2 },
+      { creature: 'spitter', weight: 2 },
+      { creature: 'skitterer', weight: 1 },
+    ],
     hasShop: false,
     hasPortal: false,
     spawn: [0, 18],
