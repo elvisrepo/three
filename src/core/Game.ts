@@ -995,8 +995,11 @@ export class Game {
       if (t.dataset.act === 'load') this.loadSave(id);
       else if (t.dataset.act === 'exp') this.exportHero(id);
       else if (t.dataset.act === 'del') {
-        deleteChar(id);
-        this.renderCharList();
+        const s = listChars().find((c) => c.id === id);
+        if (s && window.confirm(`Delete ${s.name} (Lv${s.level}) forever? Export first if you want a backup.`)) {
+          deleteChar(id);
+          this.renderCharList();
+        }
       }
     });
     this.renderCharList();
