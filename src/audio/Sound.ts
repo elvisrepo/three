@@ -251,6 +251,14 @@ export class SoundManager {
     this.noise(0.09, 0.16, 'bandpass', 900, 320, 1.4);
   }
 
+  /** Frost Lance cast: glassy shimmer over a cold breath. */
+  frost(): void {
+    if (!this.gate('frost', 200)) return;
+    this.tone('triangle', 1320, 2400, 0.3, 0.14);
+    this.tone('sine', 660, 1180, 0.35, 0.12, 0.05);
+    this.noise(0.3, 0.1, 'highpass', 3000, 6000);
+  }
+
   fireball(): void {
     if (!this.gate('fire', 120)) return;
     this.tone('sawtooth', 280, 950, 0.25, 0.22);

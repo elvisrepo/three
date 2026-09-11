@@ -30,7 +30,8 @@ import {
   type GearBonus,
 } from '../items/Items';
 import { CLASSES, CLASS_IDS, type StarterClass, type Attrs } from '../data/Classes';
-import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL } from '../data/Jobs';
+import { jobsFor, jobById, ADVANCE_LEVEL, ULT_LEVEL, EXTRA_LEVEL } from '../data/Jobs';
+import { FrostLance, FROST_LANCE_LENGTH } from '../entities/FrostLance';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
@@ -161,6 +162,7 @@ export class Game {
   private muzzleCursor = 0;
   /** quarks pilot: meteor fall + impact systems (fire AoE only). */
   private meteorFx!: MeteorFx;
+  private frostLance!: FrostLance;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -227,7 +229,10 @@ export class Game {
   private skillCdMax = 1;
   private skill3Timer = 0;
   private skill3CdMax = 1;
+  private skill4Timer = 0;
+  private skill4CdMax = 1;
   private ultHintShown = false;
+  private extraHintShown = false;
   private whirlTimer = 0;
   /** Whirlwind: time to next damage spin + damage per spin (stored at cast). */
   private whirlTick = 0;
@@ -323,6 +328,9 @@ export class Game {
   private elSkill2Cd: HTMLElement | null = null;
   private elSkill3: HTMLElement | null = null;
   private elSkill3Cd: HTMLElement | null = null;
+  private elSkill4: HTMLElement | null = null;
+  private elSkill4Cd: HTMLElement | null = null;
+  private elCdnExtra: HTMLElement | null = null;
   private elCdnSkill3: HTMLElement | null = null;
   private elCdnFire: HTMLElement | null = null;
   private elCdnBlink: HTMLElement | null = null;
@@ -409,6 +417,7 @@ export class Game {
     for (let i = 0; i < 2; i++) this.chargeUps.push(new ChargeUp(this.scene));
     for (let i = 0; i < 4; i++) this.muzzles.push(new MuzzleFlash(this.scene));
     this.meteorFx = new MeteorFx(this.scene);
+    this.frostLance = new FrostLance(this.scene);
     this.loot = new LootManager(this.scene);
     this.stash.fromJSON(loadSharedStash(), 0);
   }
@@ -803,7 +812,10 @@ export class Game {
     this.elSkill2Cd = $('cd-skill2');
     this.elSkill3 = $('skill-ult');
     this.elSkill3Cd = $('cd-skill3');
+    this.elSkill4 = $('skill-extra');
+    this.elSkill4Cd = $('cd-extra');
     this.elCdnSkill3 = $('cdn-skill3');
+    this.elCdnExtra = $('cdn-extra');
     this.elCdnFire = $('cdn-fire');
     this.elCdnBlink = $('cdn-blink');
     this.elCdnDodge = $('cdn-dodge');
@@ -1119,6 +1131,7 @@ export class Game {
     this.currentSaveId = makeCharId();
     this.sanctumHintShown = false;
     this.ultHintShown = false;
+    this.extraHintShown = false;
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone('city');
@@ -1133,6 +1146,7 @@ export class Game {
     this.currentSaveId = s.id;
     this.sanctumHintShown = false;
     this.ultHintShown = false;
+    this.extraHintShown = false;
     this.started = true;
     if (this.elCharSelect) this.elCharSelect.style.display = 'none';
     this.loadZone(s.zoneId, { pos: [s.pos[0], s.pos[1]] });
@@ -1262,6 +1276,7 @@ export class Game {
     }
     this.pendingAoe = [];
     this.meteorFx.stopAll();
+    this.frostLance.clear();
     this.monsters = [];
     this.bossCtrls = [];
     this.elites.clear();
@@ -1322,6 +1337,7 @@ export class Game {
       this.autosave();
       this.hintSanctum();
       this.hintUlt();
+      this.hintExtra();
     }
     if (def.id === 'city') {
       this.maybeSpawnCityAxe();
@@ -1330,6 +1346,7 @@ export class Game {
     this.refreshSkillSlot1();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
+    this.refreshSkillSlot4();
   }
 
   private spawnZoneMonsters(def: ZoneDef): void {
@@ -1662,6 +1679,7 @@ export class Game {
       }
       else if (e.code === b.job) this.castJobSkill();
       else if (e.code === b.ult) this.castUlt();
+      else if (e.code === b.extra) this.castExtra();
       else if (e.code === b.potion) this.tryPotion();
       else if (e.code === b.bag) this.toggleInventory();
       else if (e.code === b.char) this.toggleChar();
@@ -2138,6 +2156,7 @@ export class Game {
     this.closeJobModal();
     this.refreshSkillSlot();
     this.refreshSkillSlot3();
+    this.refreshSkillSlot4();
     this.renderChar();
     this.sound.jobAdvance();
     this.numbers.spawn(this.player.position, `${def.name.toUpperCase()}!`, { color: '#ffd21f', crit: true, scale: 1.8 });
@@ -2179,6 +2198,36 @@ export class Game {
   /** Ultimate slot is job-bound and unlocks at Lv20 — no save data needed. */
   private ultUnlocked(): boolean {
     return this.player.job !== null && this.player.level >= ULT_LEVEL;
+  }
+
+  /** 4th-skill slot: only jobs with `extra` (Cryomancer today), from Lv15. */
+  private extraUnlocked(): boolean {
+    const job = jobById(this.player.job);
+    return !!job?.extra && this.player.level >= EXTRA_LEVEL;
+  }
+
+  private refreshSkillSlot4(): void {
+    if (!this.elSkill4) return;
+    const job = jobById(this.player.job);
+    if (job?.extra && this.player.level >= EXTRA_LEVEL) {
+      this.elSkill4.classList.remove('locked');
+      this.elSkill4.innerHTML = `${job.extra.icon}<span class="key">4</span><span class="cd-num" id="cdn-extra"></span><div id="cd-extra" class="cd"></div>`;
+      this.elSkill4.title = `${job.extra.name} (4) — ${job.extra.desc} · ${job.extra.cost} MP`;
+    } else {
+      this.elSkill4.classList.add('locked');
+      this.elSkill4.innerHTML = `4<span class="cd-num" id="cdn-extra"></span><div id="cd-extra" class="cd"></div>`;
+      this.elSkill4.title = job?.extra ? `Extra skill unlocks at Lv${EXTRA_LEVEL}` : 'No extra skill for this job';
+    }
+    this.elSkill4Cd = document.getElementById('cd-extra');
+    this.elCdnExtra = document.getElementById('cdn-extra');
+  }
+
+  /** One-time extra-skill unlock toast (slot refreshes every zone load). */
+  private hintExtra(): void {
+    if (!this.started || !this.extraUnlocked() || this.extraHintShown) return;
+    this.extraHintShown = true;
+    const job = jobById(this.player.job);
+    if (job?.extra) this.showToast(`💠 EXTRA unlocked: ${job.extra.icon} ${job.extra.name} — press 4!`, 3.5);
   }
 
   private refreshSkillSlot3(): void {
@@ -2384,6 +2433,45 @@ export class Game {
     this.player.spendMana(ult.cost);
     this.skill3Timer = cd;
     this.skill3CdMax = cd;
+  }
+
+  /** 4th skill on key 4. Cryomancer-only today (Frost Lance), unlocked at Lv15. */
+  private castExtra(): void {
+    if (!this.started || !this.player.alive || this.skill4Timer > 0) return;
+    const job = jobById(this.player.job);
+    const extra = job?.extra;
+    if (!extra || this.player.level < EXTRA_LEVEL) {
+      this.showToast(extra ? `Extra skill unlocks at Lv${EXTRA_LEVEL}.` : 'No extra skill for this job.');
+      return;
+    }
+    if (this.player.mana < extra.cost) {
+      this.showToast('Not enough mana.');
+      return;
+    }
+    const dmg = this.effDmg(this.player.attackDamage);
+    switch (extra.id) {
+      case 'frost_lance': {
+        const dir = this.aimDir();
+        if (!dir) return;
+        this.player.faceInstant(dir.clone().add(this.player.position));
+        this.player.castAnim = 1;
+        this.frostLance.cast(this.player.position, dir);
+        // Damage rides three staggered circles down the lance line.
+        for (let i = 0; i < 3; i++) {
+          const cx = this.player.position.x + dir.x * (4 + i * 4);
+          const cz = this.player.position.z + dir.z * (4 + i * 4);
+          this.queueAoe(cx, cz, 2.6, dmg * 1.1, 1.5, 0.15 + i * 0.15, 0x9adcff);
+        }
+        this.effects.ring(this.player.position.x, this.player.position.z, 0x9adcff, FROST_LANCE_LENGTH, 0.4);
+        this.sound.frost();
+        break;
+      }
+      default:
+        return;
+    }
+    this.player.spendMana(extra.cost);
+    this.skill4Timer = extra.cooldown;
+    this.skill4CdMax = extra.cooldown;
   }
 
   /** Shared kill tail: loot/XP/quest payout + target + boss bar. */
@@ -2680,6 +2768,10 @@ export class Game {
     if (this.ultUnlocked()) {
       this.refreshSkillSlot3();
       this.hintUlt();
+    }
+    if (this.extraUnlocked()) {
+      this.refreshSkillSlot4();
+      this.hintExtra();
     }
     this.checkLevelQuests();
   }
@@ -3329,6 +3421,7 @@ export class Game {
     this.blinkTimer = Math.max(0, this.blinkTimer - dt);
     this.skillTimer = Math.max(0, this.skillTimer - dt);
     this.skill3Timer = Math.max(0, this.skill3Timer - dt);
+    this.skill4Timer = Math.max(0, this.skill4Timer - dt);
     this.camShake = Math.max(0, this.camShake - dt * 1.6);
     this.fountainTick(dt);
 
@@ -3583,6 +3676,7 @@ export class Game {
     this.numbers.update(dt);
     this.effects.update(dt);
     this.meteorFx.update(dt);
+    this.frostLance.update(dt);
     for (const c of this.chargeUps) c.update(dt);
     for (const m of this.muzzles) m.update(dt);
     this.portalAura.update(dt);
@@ -3661,6 +3755,7 @@ export class Game {
     this.syncCooldown(this.elDodgeCd, this.elCdnDodge, this.player.dodgeCd, DODGE_CD);
     this.syncCooldown(this.elSkill2Cd, this.elCdnSkill2, this.skillTimer, this.skillCdMax);
     this.syncCooldown(this.elSkill3Cd, this.elCdnSkill3, this.skill3Timer, this.skill3CdMax);
+    this.syncCooldown(this.elSkill4Cd, this.elCdnExtra, this.skill4Timer, this.skill4CdMax);
 
     this.hudTimer -= 1 / 60;
     if (this.hudTimer > 0) return;
