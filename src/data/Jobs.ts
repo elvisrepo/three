@@ -90,6 +90,7 @@ export const JOBS: JobDef[] = [
     ultimate: { id: 'cataclysm', name: 'Cataclysm', icon: '🌋', cooldown: 30, cost: 30, desc: '3 staggered meteors, 3x each.' },
     extras: [
       { skill: { id: 'storm_lance', name: 'Storm Lance', icon: '🌩️', cooldown: 12, cost: 28, desc: 'Lightning bundle: 4x 1.2x down a line.' }, level: 20 },
+      { skill: { id: 'void_rift', name: 'Void Rift', icon: '🌌', cooldown: 18, cost: 32, desc: 'Void portal: drags foes in, 6x 0.8x ticks.' }, level: 30 },
     ],
   },
   {

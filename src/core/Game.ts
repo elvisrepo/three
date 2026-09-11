@@ -36,6 +36,7 @@ import { StormLance, STORM_LANCE_LENGTH, STORM_RED } from '../entities/StormLanc
 import { NovaBeam, NOVA_BEAM_LENGTH } from '../entities/NovaBeam';
 import { MeteorRocks } from '../entities/MeteorRocks';
 import { SnareTrap, SNARE_RADIUS } from '../entities/SnareTrap';
+import { VoidRift, VOID_RIFT_RADIUS } from '../entities/VoidRift';
 import { listChars, saveChar, deleteChar, makeCharId, SAVE_VERSION, loadSharedStash, saveSharedStash, type CharacterSave } from './SaveManager';
 import { getBinds, setBind, codeLabel, BIND_LABELS, type BindAction } from './Keybinds';
 import { StateMachine, GameState } from './StateMachine';
@@ -126,6 +127,8 @@ interface PendingAoe {
   /** quarks pilot: meteor streak column handle + impact flag (fire only). */
   meteor: boolean;
   qFall: QuarksSystem | null;
+  /** Implosion pull on detonation (meteor vacuum, void rift grind). */
+  vacuum: boolean;
   /** Fraction of player max HP dealt on detonation (zone hazards). */
   hurtPct: number;
 }
@@ -171,6 +174,7 @@ export class Game {
   private novaBeam!: NovaBeam;
   private meteorRocks!: MeteorRocks;
   private snareTrap!: SnareTrap;
+  private voidRift!: VoidRift;
   private loot!: LootManager;
   private sound = new SoundManager();
   private inventory = new Inventory();
@@ -428,6 +432,7 @@ export class Game {
     this.meteorFx = new MeteorFx(this.scene);
     this.meteorRocks = new MeteorRocks(this.scene);
     this.snareTrap = new SnareTrap(this.scene);
+    this.voidRift = new VoidRift(this.scene);
     this.frostLance = new FrostLance(this.scene);
     this.stormLance = new StormLance(this.scene);
     this.novaBeam = new NovaBeam(this.scene);
@@ -1293,6 +1298,7 @@ export class Game {
     this.meteorFx.stopAll();
     this.meteorRocks.clear();
     this.snareTrap.clear();
+    this.voidRift.clear();
     this.frostLance.clear();
     this.stormLance.clear();
     this.novaBeam.clear();
@@ -2547,6 +2553,26 @@ export class Game {
         this.sound.beam();
         break;
       }
+      case 'void_rift': {
+        const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
+        if (!aim) return;
+        const dx = aim.x - this.player.position.x;
+        const dz = aim.z - this.player.position.z;
+        if (Math.hypot(dx, dz) > 16) {
+          this.showToast('Void Rift out of range (16m).');
+          return;
+        }
+        this.player.faceInstant(aim.clone().add(this.player.position));
+        this.player.castAnim = 1;
+        this.voidRift.cast(aim.x, aim.z);
+        // Portal grinds for ~2.4s: each tick drags victims in, burns, slows.
+        for (let k = 0; k < 6; k++) {
+          this.queueAoe(aim.x, aim.z, VOID_RIFT_RADIUS, dmg * 0.8, 1, 0.3 + k * 0.4, 0x7b5cff, { vacuum: true });
+        }
+        this.effects.ring(aim.x, aim.z, 0x7b5cff, VOID_RIFT_RADIUS, 0.5);
+        this.sound.beam();
+        break;
+      }
       case 'voltaic_snare': {
         const aim = this.groundPointFromScreen(this.lastMouse.x, this.lastMouse.y);
         if (!aim) return;
@@ -2658,7 +2684,7 @@ export class Game {
     c.start(hx, 1.4, hz, color, dur, () => this.fireMuzzle(hx, 1.4, hz, color));
   }
 
-  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string; meteor?: boolean; hurtPct?: number }): PendingAoe {
+  private queueAoe(x: number, z: number, radius: number, damage: number, slow: number, delay: number, color: number, opts?: { flash?: string; scorch?: boolean; sfx?: string; meteor?: boolean; hurtPct?: number; vacuum?: boolean }): PendingAoe {
     const mesh = new THREE.Mesh(
       new THREE.RingGeometry(Math.max(0.1, radius - 0.4), radius, 40),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, side: THREE.DoubleSide, depthWrite: false }),
@@ -2666,7 +2692,7 @@ export class Game {
     mesh.rotation.x = -Math.PI / 2;
     mesh.position.set(x, 0.05, z);
     this.scene.add(mesh);
-    const entry: PendingAoe = { x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh, meteor: opts?.meteor ?? false, qFall: null, hurtPct: opts?.hurtPct ?? 0 };
+    const entry: PendingAoe = { x, z, radius, damage, slow, timer: delay, color, flash: opts?.flash ?? null, scorch: opts?.scorch ?? false, sfx: opts?.sfx ?? null, mesh, meteor: opts?.meteor ?? false, qFall: null, vacuum: opts?.vacuum ?? false, hurtPct: opts?.hurtPct ?? 0 };
     this.pendingAoe.push(entry);
     return entry;
   }
@@ -2703,6 +2729,8 @@ export class Game {
       if (a.meteor) this.meteorFx.impact(a.x, a.z);
       // Meteor vacuum: drag nearby foes into the blast so chasers can't walk out of it.
       if (a.meteor) this.vacuumTo(a.x, a.z, a.radius);
+      // Void rift grind: each tick drags victims back into the portal.
+      if (a.vacuum) this.vacuumTo(a.x, a.z, a.radius);
       if (a.scorch) this.effects.scorch(a.x, a.z, a.radius);
       if (a.hurtPct > 0 && this.player.alive) {
         const pdx = this.player.position.x - a.x;
@@ -3780,6 +3808,7 @@ export class Game {
     this.meteorFx.update(dt);
     this.meteorRocks.update(dt);
     this.snareTrap.update(dt);
+    this.voidRift.update(dt);
     this.frostLance.update(dt);
     this.stormLance.update(dt);
     this.novaBeam.update(dt);
